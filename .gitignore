@@ -1,0 +1,10 @@
+vilt.egg-info/
+vilt/__pycache__/
+vilt/datamodules/__pycache__/
+vilt/datasets/__pycache__/
+vilt/gadgets/__pycache__/
+vilt/modules/.vilt_module.py.swp
+vilt/modules/__pycache__/
+vilt/transforms/__pycache__/
+vilt/utils/__pycache__/
+*.sh

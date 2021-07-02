@@ -87,6 +87,105 @@ def optimal_transport_dist(
     return distance
 
 
+def compute_moco_contrastive(pl_module, batch):
+    def _momentum_update_key_layer(em, q_layer, k_layer):
+        for param_q, param_k in zip(q_layer.parameters(), k_layer.parameters()):
+            param_k.data = param_k.data * em + param_q.data * (1.0 - em)
+    
+    def _concat_all_gather(tensor):
+        tensors_gather = [torch.ones_like(tensor) for _ in range(torch.distributed.get_world_size())]
+        torch.distributed.all_gather(tensors_gather, tensor, async_op=False)
+                
+        output = torch.cat(tensors_gather, dim=0)
+        return output
+
+    def _dequeue_and_enqueue(keys, queue_type):
+        keys = _concat_all_gather(keys)
+        batch_size = keys.shape[0]
+        if pl_module.num_negative % batch_size != 0:
+            return
+        if queue_type == 'text':
+            ptr = int(pl_module.text_queue_ptr)
+            assert pl_module.num_negative % batch_size == 0
+            pl_module.text_queue[:, ptr:ptr+batch_size] = keys.T
+            ptr = (ptr + batch_size) % pl_module.num_negative
+            pl_module.text_queue_ptr[0] = ptr
+        if queue_type == 'image':
+            ptr = int(pl_module.image_queue_ptr)
+            assert pl_module.num_negative % batch_size == 0
+            pl_module.image_queue[:, ptr:ptr + batch_size] = keys.T
+            ptr = (ptr + batch_size) % pl_module.num_negative
+            pl_module.image_queue_ptr[0] = ptr
+
+    loss = 0
+    loss_fct = nn.CrossEntropyLoss()
+    ret = {}
+    phase = "train" if pl_module.training else "val"
+
+    # momentum update key encoder
+    _momentum_update_key_layer(pl_module.momentum, pl_module.text_embeddings, pl_module.k_text_embeddings)
+    _momentum_update_key_layer(pl_module.momentum, pl_module.token_type_embeddings, pl_module.k_token_type_embeddings)
+    _momentum_update_key_layer(pl_module.momentum, pl_module.transformer, pl_module.k_transformer)
+    _momentum_update_key_layer(pl_module.momentum, pl_module.moco_head, pl_module.k_moco_head)
+
+    with torch.no_grad():
+        infer_k = pl_module.infer_k(batch, mask_text=False, mask_image=False)
+        image_representation_k, text_representation_k = pl_module.k_moco_head(infer_k['image_feats'], infer_k['text_feats'])
+
+    if pl_module.image_attack:
+        # image = PGD_Attack(infer["image_feats"])
+        infer = pl_module.infer(batch, mask_text=False, mask_image=False)
+        image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
+        q = nn.functional.normalize(image_representation_q, dim=1)
+        k = nn.functional.normalize(text_representation_k, dim=1)
+        l_pos = torch.einsum('nc,nc->n', [q, k]).unsqueeze(-1)
+        l_neg = torch.einsum('nc,ck->nk', [q, pl_module.image_queue.clone().detach()])
+        logits = torch.cat([l_pos, l_neg], dim=1)
+        logits /= pl_module.temperature
+    
+        labels = torch.zeros(logits.shape[0], dtype=torch.long)
+        labels = labels.type_as(logits)
+
+        ret["image_logits"] = logits
+        ret["image_labels"] = labels
+        acc = getattr(pl_module, f"{phase}_moco_img_accuracy")(
+            ret["image_logits"], ret["image_labels"]
+        )
+
+        loss = loss + loss_fct(logits.float(), labels.long())
+
+        _dequeue_and_enqueue(k, 'image')
+
+    if pl_module.image_attack:
+        # text = Geometric_Attack(infer["text_feats"])
+        infer = pl_module.infer(batch, mask_text=False, mask_image=False)
+        image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
+        q = nn.functional.normalize(text_representation_q, dim=1)
+        k = nn.functional.normalize(image_representation_k, dim=1)
+        l_pos = torch.einsum('nc,nc->n', [q, k]).unsqueeze(-1)
+        l_neg = torch.einsum('nc,ck->nk', [q, pl_module.text_queue.clone().detach()])
+        logits = torch.cat([l_pos, l_neg], dim=1)
+        logits /= pl_module.temperature
+    
+        labels = torch.zeros(logits.shape[0], dtype=torch.long)
+        labels = labels.type_as(logits)
+
+        ret["text_logits"] = logits
+        ret["text_labels"] = labels
+        acc = getattr(pl_module, f"{phase}_moco_txt_accuracy")(
+            ret["text_logits"], ret["text_labels"]
+        )
+
+        loss = loss + loss_fct(logits.float(), labels.long())
+
+        _dequeue_and_enqueue(k, 'text')
+
+    ret["moco_loss"] = loss
+    loss = getattr(pl_module, f"{phase}_moco_loss")(ret["moco_loss"])
+    
+    return ret
+
+
 def compute_mlm(pl_module, batch):
     infer = pl_module.infer(batch, mask_text=True, mask_image=False)
     mlm_logits = pl_module.mlm_score(infer["text_feats"])
@@ -570,6 +669,9 @@ def init_weights(module):
     elif isinstance(module, nn.LayerNorm):
         module.bias.data.zero_()
         module.weight.data.fill_(1.0)
+    elif isinstance(module, nn.Sequential):
+        for sub_layer in module:
+            init_weights(sub_layer)
 
     if isinstance(module, nn.Linear) and module.bias is not None:
         module.bias.data.zero_()

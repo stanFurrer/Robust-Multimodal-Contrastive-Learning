@@ -5,6 +5,7 @@ ex = Experiment("ViLT")
 
 def _loss_names(d):
     ret = {
+        "moco": 0,
         "itm": 0,
         "mlm": 0,
         "mpp": 0,
@@ -64,6 +65,13 @@ def config():
     # Downstream Setting
     get_recall_metric = False
 
+    # Contrastive setting
+    num_negative = 0
+    text_attack = False
+    image_attack = False
+    momentum = 1.0
+    temperature = 1.0
+
     # PL Trainer Setting
     resume_from = None
     fast_dev_run = False
@@ -94,11 +102,30 @@ def env_dandelin():
 @ex.named_config
 def task_mlm_itm():
     exp_name = "mlm_itm"
-    datasets = ["coco", "vg", "sbu", "gcc"]
+    # datasets = ["coco", "vg", "sbu", "gcc"]
+    datasets = ["coco"]
     loss_names = _loss_names({"itm": 1, "mlm": 1})
     batch_size = 4096
     max_epoch = 10
     max_image_len = 200
+
+
+@ex.named_config
+def task_moco():
+    exp_name = "moco"
+    # datasets = ["coco", "vg", "sbu", "gcc"]
+    datasets = ["coco"]
+    num_negative = 65536
+    momentum = 0.999
+    temperature = 0.07
+    text_attack = True
+    image_attack = True
+    loss_names = _loss_names({"moco": 1})
+    # batch_size = 4096
+    batch_size = 16
+    max_epoch = 10
+    max_image_len = 200
+    test_only = True
 
 
 @ex.named_config

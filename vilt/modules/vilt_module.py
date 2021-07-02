@@ -52,6 +52,33 @@ class ViLTransformerSS(pl.LightningModule):
         if config["loss_names"]["mpp"] > 0:
             self.mpp_score = heads.MPPHead(bert_config)
             self.mpp_score.apply(objectives.init_weights)
+        
+        if config["loss_names"]["moco"] > 0:
+            self.k_text_embeddings = BertEmbeddings(bert_config)
+            self._shadow_layer(self.text_embeddings, self.k_text_embeddings)
+            self.k_token_type_embeddings = nn.Embedding(2, config["hidden_size"])
+            self._shadow_layer(self.token_type_embeddings, self.k_token_type_embeddings)
+            self.k_transformer = getattr(vit, self.hparams.config["vit"])(
+                pretrained=True, config=self.hparams.config
+            )
+            self._shadow_layer(self.transformer, self.k_transformer)
+            self.moco_head = heads.MOCOHead(config["hidden_size"], config["hidden_size"], 128)
+            self.moco_head.apply(objectives.init_weights)
+            self.k_moco_head = heads.MOCOHead(config["hidden_size"], config["hidden_size"], 128)
+            self._shadow_layer(self.moco_head, self.k_moco_head)
+            self.momentum = config["momentum"]
+            self.temperature = config["temperature"]
+            self.text_attack = config["text_attack"]
+            self.image_attack = config["image_attack"]
+            self.num_negative = config["num_negative"]
+            if self.text_attack:
+                self.register_buffer("text_queue", torch.randn(128, self.num_negative))
+                self.text_queue = nn.functional.normalize(self.text_queue, dim=0)
+                self.register_buffer("text_queue_ptr", torch.zeros(1, dtype=torch.long))
+            if self.image_attack:
+                self.register_buffer("image_queue", torch.randn(128, self.num_negative))
+                self.image_queue = nn.functional.normalize(self.image_queue, dim=0)
+                self.register_buffer("image_queue_ptr", torch.zeros(1, dtype=torch.long))
 
         # ===================== Downstream ===================== #
         if (
@@ -106,6 +133,11 @@ class ViLTransformerSS(pl.LightningModule):
             ckpt = torch.load(self.hparams.config["load_path"], map_location="cpu")
             state_dict = ckpt["state_dict"]
             self.load_state_dict(state_dict, strict=False)
+
+    def _shadow_layer(self, q_layer, k_layer):
+        for param_q, param_k in zip(q_layer.parameters(), k_layer.parameters()):
+            param_k.data.copy_(param_q.data)
+            param_k.requires_grad = False
 
     def infer(
         self,
@@ -183,6 +215,83 @@ class ViLTransformerSS(pl.LightningModule):
 
         return ret
 
+    def infer_k(
+        self,
+        batch,
+        mask_text=False,
+        mask_image=False,
+        image_token_type_idx=1,
+        image_embeds=None,
+        image_masks=None,
+    ):
+        # if f"image_{image_token_type_idx - 1}" in batch:
+        #     imgkey = f"image_{image_token_type_idx - 1}"
+        # else:
+        #     imgkey = "image"
+        imgkey = "image"
+
+        do_mlm = "_mlm" if mask_text else ""
+        text_ids = batch[f"text_ids{do_mlm}"]
+        # text_labels = batch[f"text_labels{do_mlm}"]
+        text_masks = batch[f"text_masks"]
+        text_embeds = self.k_text_embeddings(text_ids)
+
+        # if image_embeds is None and image_masks is None:
+        img = batch[imgkey][0]
+        (
+            image_embeds,
+            image_masks,
+            patch_index,
+            image_labels,
+        ) = self.k_transformer.visual_embed(
+            img,
+            max_image_len=self.hparams.config["max_image_len"],
+            mask_it=mask_image,
+        )
+        # else:
+        #     patch_index, image_labels = (
+        #         None,
+        #         None,
+        #     )
+
+        text_embeds, image_embeds = (
+            text_embeds + self.k_token_type_embeddings(torch.zeros_like(text_masks)),
+            image_embeds
+            + self.k_token_type_embeddings(
+                torch.full_like(image_masks, image_token_type_idx)
+            ),
+        )
+
+        co_embeds = torch.cat([text_embeds, image_embeds], dim=1)
+        co_masks = torch.cat([text_masks, image_masks], dim=1)
+
+        x = co_embeds
+
+        for i, blk in enumerate(self.k_transformer.blocks):
+            x, _attn = blk(x, mask=co_masks)
+
+        x = self.k_transformer.norm(x)
+        text_feats, image_feats = (
+            x[:, : text_embeds.shape[1]],
+            x[:, text_embeds.shape[1] :],
+        )
+        # cls_feats = self.pooler(x)
+
+        ret = {
+            "text_feats": text_feats,
+            "image_feats": image_feats,
+            # "cls_feats": cls_feats,
+            # "raw_cls_feats": x[:, 0],
+            # "image_labels": image_labels,
+            "image_masks": image_masks,
+            # "text_labels": text_labels,
+            "text_ids": text_ids,
+            "text_masks": text_masks,
+            "patch_index": patch_index,
+        }
+
+        return ret
+
     def forward(self, batch):
         ret = dict()
         if len(self.current_tasks) == 0:
@@ -212,6 +321,10 @@ class ViLTransformerSS(pl.LightningModule):
         # Image Retrieval and Text Retrieval
         if "irtr" in self.current_tasks:
             ret.update(objectives.compute_irtr(self, batch))
+
+        # MoCo Contrasive loss
+        if "moco" in self.current_tasks:
+            ret.update(objectives.compute_moco_contrastive(self, batch))
 
         return ret
 
