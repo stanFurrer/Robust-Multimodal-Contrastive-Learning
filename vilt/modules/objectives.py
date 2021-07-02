@@ -1,3 +1,6 @@
+import sys #
+from copy import deepcopy#
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -336,20 +339,101 @@ def compute_vqa(pl_module, batch):
     return ret
 
 
+def pgd(pl_module,batch) : 
+    
+    ## hyper parameter PGD
+    adv_steps_img    = pl_module.config["adv_steps_img"]
+    adv_lr_img       = pl_module.config["adv_lr_img"]
+    adv_max_norm_img = pl_module.config["adv_max_norm_img"]    
+    # Get the original img
+    img_init = batch['image_1'][0]
+    # Initialize the delta as zero vectors
+    img_delta = torch.zeros_like(img_init)
+    for astep in range(adv_steps_img):                
+        #print("This is the step : ", astep)
+        # Need to get the gradient for each batch of image features 
+        img_delta.requires_grad_(True)                
+        # Get all answer of model with adv_delta added to img_feat
+        try :
+            batch['image_1'][0] = (img_init + img_delta)#.to(pl_module.device)
+            infer1 = pl_module.infer(
+                batch, mask_text=False, mask_image=False, image_token_type_idx=1)
+            infer2 = pl_module.infer(
+                batch, mask_text=False, mask_image=False, image_token_type_idx=2)
+            # NlVR2 output
+            cls_feats = torch.cat([infer1["cls_feats"], infer2["cls_feats"]], dim=-1)
+            nlvr2_logits = pl_module.nlvr2_classifier(cls_feats)
+            # Shape [batch_size,2]
+        except:
+            print("problem in step ",astep)
+            sys.exit("STOPP")
+        # Creat loss : reduction "none" because then we do the mean and devide by adv_steps_img
+        nlvr2_labels = torch.tensor(batch["answers"]).to(pl_module.device).long()
+        loss = F.cross_entropy(nlvr2_logits, nlvr2_labels, reduction='none')
+        loss = loss.mean() #/ adv_steps_img
+        # calculate x.grad
+        loss.backward(retain_graph=True)
+        # Get gradient
+        img_delta_grad = img_delta.grad.clone().detach().float()
+        # Get inf_norm gradient (It will be used to normalize the img_delta_grad)
+        denorm = torch.norm(img_delta_grad.view(img_delta_grad.size(0), -1), dim=1, p=float("inf")).view(-1, 1, 1,1)
+
+        # Clip gradient to Lower Bound
+        denorm = torch.clamp(denorm, min=1e-8)
+        # calculate delta_step  with format img_delta
+        img_delta_step = (adv_lr_img * img_delta_grad / denorm).to(img_delta)
+        # Add the calculated step to img_delta (The perturbation)
+        img_delta = (img_delta + img_delta_step).detach()
+        # clip the delta if needed
+        if adv_max_norm_img > 0:
+            img_delta = torch.clamp(img_delta, -adv_max_norm_img, adv_max_norm_img).detach()                      
+    return batch
+
+def geometric(pl_module, batch) : 
+    
+    attack_words = \
+    pl_module.greedy_attacker.adv_attack_samples(pl_module, 
+                                       batch
+                                       #img_k
+                                       #txt_img_queue       
+                                      ) 
+    
+    print("This is the Real versus attacked sentences : ")
+    
+    for i in range(len(batch["text"])):
+        print("Real sentence----: ",batch["text"][i])
+        print("Attacked sentence: ",attack_words["attacked_words"][i])
+    
+    txt_original_attacked   = {"original": batch["text"],
+                               "attacked": attack_words["text"]
+                              }
+    batch["text"]         = attack_words["text"]
+    batch["text_ids"]     = attack_words["text_ids"]
+    batch["text_masks"]   = attack_words["text_masks"]
+
+    return batch, txt_original_attacked
+    
 def compute_nlvr2(pl_module, batch):
+
+    # PGD attack
+    #batch = pgd(pl_module,batch)    
+    # Geometric Attack
+    batch,txt_original_attacked =  geometric(pl_module, batch)
+    sys.exit("STOOOOOOOOOOOOOP")    
+    # ViLT output
     infer1 = pl_module.infer(
         batch, mask_text=False, mask_image=False, image_token_type_idx=1
     )
     infer2 = pl_module.infer(
         batch, mask_text=False, mask_image=False, image_token_type_idx=2
     )
-
+    # NlVR2 output
     cls_feats = torch.cat([infer1["cls_feats"], infer2["cls_feats"]], dim=-1)
     nlvr2_logits = pl_module.nlvr2_classifier(cls_feats)
-
+    # Compute the cross-entropy
     nlvr2_labels = batch["answers"]
     nlvr2_labels = torch.tensor(nlvr2_labels).to(pl_module.device).long()
-    nlvr2_loss = F.cross_entropy(nlvr2_logits, nlvr2_labels)
+    nlvr2_loss   = F.cross_entropy(nlvr2_logits, nlvr2_labels)
 
     ret = {
         "nlvr2_loss": nlvr2_loss,

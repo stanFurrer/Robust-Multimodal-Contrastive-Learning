@@ -1,11 +1,42 @@
+#### New
+import os #
+from collections import OrderedDict #
+from transformers import BertTokenizer#
+from Geometric_attack.greedy_attack_vilt import GreedyAttack #
+####
+
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 import vilt.modules.vision_transformer as vit
-
 from transformers.models.bert.modeling_bert import BertConfig, BertEmbeddings
 from vilt.modules import heads, objectives, vilt_utils
 
+
+class Projector(pl.LightningModule):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super().__init__()
+        self.output_dim = output_dim
+        self.input_dim  = input_dim
+        self.hidden_dim = hidden_dim
+        self.img_model  = nn.Sequential(OrderedDict([
+            ('linear1_img',nn.Linear(self.input_dim, self.hidden_dim)),
+            ('norm_img',   nn.LayerNorm(self.hidden_dim)),
+            ('relu_img',   nn.ReLU()),
+            ('linear2_img',nn.Linear(self.hidden_dim, self.output_dim, bias=False))
+        ]))
+
+        self.txt_model = nn.Sequential(OrderedDict([
+            ('linear1', nn.Linear(self.input_dim, self.hidden_dim)),
+            ('norm',    nn.LayerNorm(self.hidden_dim)),
+            ('relu',    nn.ReLU()),
+            ('linear2', nn.Linear(self.hidden_dim, self.output_dim, bias=False))
+        ]))
+
+    def forward(self, img, txt):
+        img = self.img_model(img)
+        txt = self.txt_model(txt)
+        return img, txt
 
 class ViLTransformerSS(pl.LightningModule):
     def __init__(self, config):
@@ -106,7 +137,23 @@ class ViLTransformerSS(pl.LightningModule):
             ckpt = torch.load(self.hparams.config["load_path"], map_location="cpu")
             state_dict = ckpt["state_dict"]
             self.load_state_dict(state_dict, strict=False)
-
+            
+        # ===================== Initiate Geometric class =========================
+        
+        self.projector       = Projector(config["hidden_size"],config["hidden_size"],128)
+        self.config          = config 
+        # No necessary to be there
+        self.tokenizer       = BertTokenizer.from_pretrained('bert-base-uncased')   
+        print("\n\n Flag1. Creating greedy_attacker class")
+        self.greedy_attacker = GreedyAttack(args         = self.config,
+                                            n_candidates = config["n_candidates"],
+                                            max_loops    = config["max_loops"],    
+                                            tokenizer    = self.tokenizer)        
+        print("\n Flag1. Creating greedy_attacker class Done \n")    
+        
+    def get_input_embeddings(self):
+        return self.text_embeddings.word_embeddings
+    
     def infer(
         self,
         batch,
@@ -128,7 +175,7 @@ class ViLTransformerSS(pl.LightningModule):
         text_embeds = self.text_embeddings(text_ids)
 
         if image_embeds is None and image_masks is None:
-            img = batch[imgkey][0]
+            img = batch[imgkey][0] # [0] : Because it's a list of one element
             (
                 image_embeds,
                 image_masks,
@@ -144,7 +191,9 @@ class ViLTransformerSS(pl.LightningModule):
                 None,
                 None,
             )
-
+        # image_embeds.shape : [64 217 768] :: [batch,patch,hiddensize]
+        # patch_index shape  : ([64 217 2]), (19,19)) (patch_index, (H,W))
+        
         text_embeds, image_embeds = (
             text_embeds + self.token_type_embeddings(torch.zeros_like(text_masks)),
             image_embeds
@@ -233,6 +282,8 @@ class ViLTransformerSS(pl.LightningModule):
         vilt_utils.epoch_wrapup(self)
 
     def test_step(self, batch, batch_idx):
+        # For adversarial
+        torch.set_grad_enabled(True)
         vilt_utils.set_task(self)
         output = self(batch)
         ret = dict()

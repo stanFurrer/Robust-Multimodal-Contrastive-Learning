@@ -333,6 +333,7 @@ class Attention(nn.Module):
 
 
 class Block(nn.Module):
+    """Encoder"""
     def __init__(
         self,
         dim,
@@ -464,7 +465,8 @@ class VisionTransformer(nn.Module):
         ) = embed_dim  # num_features for consistency with other models
         norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
         self.add_norm_before_transformer = add_norm_before_transformer
-
+        
+        # Linear_projection of Flattened Patches
         self.patch_embed = PatchEmbed(
             img_size=img_size,
             patch_size=patch_size,
@@ -481,7 +483,7 @@ class VisionTransformer(nn.Module):
 
         if add_norm_before_transformer:
             self.pre_norm = norm_layer(embed_dim)
-
+        
         dpr = [
             x.item() for x in torch.linspace(0, drop_path_rate, depth)
         ]  # stochastic depth decay rule
@@ -556,13 +558,14 @@ class VisionTransformer(nn.Module):
 
     def visual_embed(self, _x, max_image_len=200, mask_it=False):
         _, _, ph, pw = self.patch_embed.proj.weight.shape
-
+        
+        # Linear projection and flatten
         x = self.patch_embed(_x)
         x_mask = (_x.sum(dim=1) != 0).float()[:, None, :, :]
         x_mask = F.interpolate(x_mask, size=(x.shape[2], x.shape[3])).long()
         x_h = x_mask[:, 0].sum(dim=1)[:, 0]
         x_w = x_mask[:, 0].sum(dim=2)[:, 0]
-
+        # B : Batch
         B, C, H, W = x.shape
         spatial_pos = (
             self.pos_embed[:, 1:, :]
@@ -674,6 +677,7 @@ class VisionTransformer(nn.Module):
             return x, x_mask, (patch_index, (H, W)), None
 
     def forward_features(self, _x, max_image_len=144, mask_it=False):
+        # Encoder
         x, x_mask, patch_index, label = self.visual_embed(
             _x, max_image_len=max_image_len, mask_it=mask_it
         )
@@ -685,6 +689,7 @@ class VisionTransformer(nn.Module):
         return x, x_mask, label
 
     def forward(self, x, max_image_len=-1):
+        # Output encoder and keep the [cls]
         x, _, _ = self.forward_features(x, max_image_len=max_image_len)
         x = x[:, 0]
         x = self.head(x)
