@@ -9,10 +9,9 @@ dropbox_uploader.sh
 *.egg-info
 dvd/datamodules/urls.py
 result
-models_weights/
 scripts/
 demos/
-cos_sim_counter_fitting.npy/
+cos_sim_counter_fitting.npy
 requirements.txt.save/
 Geometric_attack/Old_code_in_case.ipynb
 Geometric_attack/counter-fitted-vectors.txt
@@ -22,5 +21,6 @@ Geometric_attack/greedy_attack_cl.py
 Geometric_attack/greedy_attack_cl_RMCL.py
 Geometric_attack/greedy_attack_cl_RMCL_print.py
 Geometric_attack/greedy_attack_with_comment.py
-
+evaluation.py
+models_weight/
 
