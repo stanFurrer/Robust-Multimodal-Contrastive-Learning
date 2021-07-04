@@ -36,6 +36,12 @@ def set_metrics(pl_module):
                 setattr(pl_module, f"{split}_{k}_accuracy", Accuracy())
                 setattr(pl_module, f"{split}_{k}_loss", Scalar())
                 setattr(pl_module, f"{split}_{k}_wpa_loss", Scalar())
+            elif k == "moco":
+                if pl_module.image_attack:
+                    setattr(pl_module, f"{split}_{k}_img_accuracy", Accuracy())
+                if pl_module.text_attack:
+                    setattr(pl_module, f"{split}_{k}_txt_accuracy", Accuracy())
+                setattr(pl_module, f"{split}_{k}_loss", Scalar())            
             else:
                 setattr(pl_module, f"{split}_{k}_accuracy", Accuracy())
                 setattr(pl_module, f"{split}_{k}_loss", Scalar())
@@ -137,6 +143,20 @@ def epoch_wrapup(pl_module):
                 getattr(pl_module, f"{phase}_{loss_name}_wpa_loss").compute(),
             )
             getattr(pl_module, f"{phase}_{loss_name}_wpa_loss").reset()
+        elif loss_name == "moco":
+            if pl_module.image_attack:
+                value = getattr(pl_module, f"{phase}_{loss_name}_img_accuracy").compute()
+                pl_module.log(f"{loss_name}/{phase}/img_accuracy_epoch", value)
+                getattr(pl_module, f"{phase}_{loss_name}_img_accuracy").reset()
+            if pl_module.text_attack:
+                value = getattr(pl_module, f"{phase}_{loss_name}_txt_accuracy").compute()
+                pl_module.log(f"{loss_name}/{phase}/txt_accuracy_epoch", value)
+                getattr(pl_module, f"{phase}_{loss_name}_txt_accuracy").reset()
+            pl_module.log(
+                f"{loss_name}/{phase}/loss_epoch",
+                getattr(pl_module, f"{phase}_{loss_name}_loss").compute(),
+            )
+            getattr(pl_module, f"{phase}_{loss_name}_loss").reset()
         else:
             value = getattr(pl_module, f"{phase}_{loss_name}_accuracy").compute()
             pl_module.log(f"{loss_name}/{phase}/accuracy_epoch", value)

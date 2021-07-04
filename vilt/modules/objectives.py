@@ -89,6 +89,179 @@ def optimal_transport_dist(
     distance = trace(cost.matmul(T.detach()))
     return distance
 
+def compute_pgd(pl_module,batch,k_text) : 
+    
+    loss_fct = nn.CrossEntropyLoss()
+    # Get the original img
+    img_init = batch['image'][0]
+    # Initialize the delta as zero vectors
+    img_delta = torch.zeros_like(img_init)
+    for astep in range(pl_module.adv_steps_img):   
+        # Need to get the gradient for each batch of image features 
+        img_delta.requires_grad_(True)                
+        try :
+            batch['image'][0] = (img_init + img_delta)#.to(pl_module.device)
+            infer = pl_module.infer(batch, mask_text=False, mask_image=False)
+            image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
+            q_attacked = nn.functional.normalize(image_representation_q, dim=1)
+
+        except:
+            print("problem in step ",astep)
+            sys.exit("STOPP")
+        # RMCL Loss
+        l_pos = torch.einsum('nc,nc->n', [q_attacked, k_text]).unsqueeze(-1)
+        l_neg = torch.einsum('nc,ck->nk', [q_attacked, pl_module.image_queue.clone().detach()])
+        logits = torch.cat([l_pos, l_neg], dim=1)
+        logits /= pl_module.temperature
+        labels = torch.zeros(logits.shape[0], dtype=torch.long)
+        labels = labels.type_as(logits)
+        loss   = loss_fct(logits.float(), labels.long())
+        # calculate x.grad
+        loss.backward(retain_graph=True)
+        # Get gradient
+        img_delta_grad = img_delta.grad.clone().detach().float()
+        # Get inf_norm gradient (It will be used to normalize the img_delta_grad)
+        denorm = torch.norm(img_delta_grad.view(img_delta_grad.size(0), -1), dim=1, p=float("inf")).view(-1, 1, 1,1)
+        # Clip gradient to Lower Bound
+        denorm = torch.clamp(denorm, min=1e-8)
+        # calculate delta_step  with format img_delta
+        img_delta_step = (pl_module.adv_lr_img * img_delta_grad / denorm).to(img_delta)
+        # Add the calculated step to img_delta (The perturbation)
+        img_delta = (img_delta + img_delta_step).detach()
+        # clip the delta if needed
+        if pl_module.adv_max_norm_img > 0:
+            img_delta = torch.clamp(img_delta, -pl_module.adv_max_norm_img, pl_module.adv_max_norm_img).detach()                      
+    return batch
+
+def compute_geometric(pl_module, batch,k_image) : 
+    
+    attack_words = \
+    pl_module.greedy_attacker.adv_attack_samples(pl_module,batch,k_image) 
+    
+    print("This is the Real versus attacked sentences : ")
+    
+    for i in range(len(batch["text"])):
+        print("Real sentence----: ",batch["text"][i])
+        print("Attacked sentence: ",attack_words["text"][i])
+    
+    txt_original_attacked   = {"original": batch["text"],
+                               "attacked": attack_words["text"]
+                              }
+    batch["text"]          = attack_words["text"]
+    batch["txt_input_ids"] = attack_words["txt_input_ids"]
+    batch["text_masks"]    = attack_words["text_masks"]
+
+    return batch #, txt_original_attacked
+
+def compute_moco_contrastive(pl_module, batch):
+    
+    def _momentum_update_key_layer(em, q_layer, k_layer):
+        """
+        Momentum update of the key encoder
+        """
+        for param_q, param_k in zip(q_layer.parameters(), k_layer.parameters()):
+            param_k.data = param_k.data * em + param_q.data * (1.0 - em)
+    
+    def _concat_all_gather(tensor):
+        """
+        Performs all_gather operation on the provided tensors.
+        *** Warning ***: torch.distributed.all_gather has no gradient.
+        """
+        tensors_gather = [torch.ones_like(tensor) for _ in range(torch.distributed.get_world_size())]
+        torch.distributed.all_gather(tensors_gather, tensor, async_op=False)
+                
+        output = torch.cat(tensors_gather, dim=0)
+        return output
+
+    def _dequeue_and_enqueue(keys, queue_type):
+        """ dequeue and euqueue the new batch of text AND image representation"""
+        keys = _concat_all_gather(keys)
+        batch_size = keys.shape[0]
+        if pl_module.num_negative % batch_size != 0:
+            return
+        if queue_type == 'text':
+            ptr = int(pl_module.text_queue_ptr)
+            assert pl_module.num_negative % batch_size == 0
+            pl_module.text_queue[:, ptr:ptr+batch_size] = keys.T
+            ptr = (ptr + batch_size) % pl_module.num_negative
+            pl_module.text_queue_ptr[0] = ptr
+        if queue_type == 'image':
+            ptr = int(pl_module.image_queue_ptr)
+            assert pl_module.num_negative % batch_size == 0
+            pl_module.image_queue[:, ptr:ptr + batch_size] = keys.T
+            ptr = (ptr + batch_size) % pl_module.num_negative
+            pl_module.image_queue_ptr[0] = ptr
+
+    loss = 0
+    loss_fct = nn.CrossEntropyLoss()
+    ret = {}
+    phase = "train" if pl_module.training else "val"
+
+    # momentum update key encoder
+    _momentum_update_key_layer(pl_module.momentum, pl_module.text_embeddings, pl_module.k_text_embeddings)
+    _momentum_update_key_layer(pl_module.momentum, pl_module.token_type_embeddings, pl_module.k_token_type_embeddings)
+    _momentum_update_key_layer(pl_module.momentum, pl_module.transformer, pl_module.k_transformer)
+    _momentum_update_key_layer(pl_module.momentum, pl_module.moco_head, pl_module.k_moco_head)
+
+    with torch.no_grad():
+        infer_k = pl_module.infer_k(batch, mask_text=False, mask_image=False)
+        image_representation_k, text_representation_k = pl_module.k_moco_head(infer_k['image_feats'], infer_k['text_feats'])
+        k_text = nn.functional.normalize(text_representation_k, dim=1)
+        k_image = nn.functional.normalize(image_representation_k, dim=1)
+
+    if pl_module.image_attack:
+        batch = compute_pgd(pl_module,batch,k_text)
+        infer = pl_module.infer(batch, mask_text=False, mask_image=False)
+        image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
+        q = nn.functional.normalize(image_representation_q, dim=1)
+        l_pos = torch.einsum('nc,nc->n', [q, k_text]).unsqueeze(-1)
+        l_neg = torch.einsum('nc,ck->nk', [q, pl_module.image_queue.clone().detach()])
+        logits = torch.cat([l_pos, l_neg], dim=1)
+        logits /= pl_module.temperature
+    
+        labels = torch.zeros(logits.shape[0], dtype=torch.long)
+        labels = labels.type_as(logits)
+
+        ret["image_logits"] = logits
+        ret["image_labels"] = labels
+        acc = getattr(pl_module, f"{phase}_moco_img_accuracy")(
+            ret["image_logits"], ret["image_labels"]
+        )
+
+        loss = loss + loss_fct(logits.float(), labels.long())
+
+        _dequeue_and_enqueue(k_image, 'image')
+
+    if pl_module.text_attack:
+        batch = compute_geometric(pl_module,batch,k_image)
+        infer = pl_module.infer(batch, mask_text=False, mask_image=False)
+        image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
+        q = nn.functional.normalize(text_representation_q, dim=1)
+        l_pos = torch.einsum('nc,nc->n', [q, k_image]).unsqueeze(-1)
+        l_neg = torch.einsum('nc,ck->nk', [q, pl_module.text_queue.clone().detach()])
+        logits = torch.cat([l_pos, l_neg], dim=1)
+        logits /= pl_module.temperature
+    
+        labels = torch.zeros(logits.shape[0], dtype=torch.long)
+        labels = labels.type_as(logits)
+
+        ret["text_logits"] = logits
+        ret["text_labels"] = labels
+        acc = getattr(pl_module, f"{phase}_moco_txt_accuracy")(
+            ret["text_logits"], ret["text_labels"]
+        )
+
+        loss = loss + loss_fct(logits.float(), labels.long())
+
+        _dequeue_and_enqueue(k_text, 'text')
+        #print("We just arrive after _dequeue_and_enqueue")
+        #sys.exit("Stop And congrat the geometric attack have been a sucess")
+               
+    print("\n\n BATCH DONE \n\n")
+    ret["moco_loss"] = loss
+    loss = getattr(pl_module, f"{phase}_moco_loss")(ret["moco_loss"])
+    
+    return ret
 
 def compute_mlm(pl_module, batch):
     infer = pl_module.infer(batch, mask_text=True, mask_image=False)
@@ -338,87 +511,79 @@ def compute_vqa(pl_module, batch):
 
     return ret
 
+def compute_pgd_finetuning(pl_module,batch) : 
+    # Attack on each image
+    for i in range(2) : 
+        # Get the original img
+        img_init = batch['image_{}'.format(i)][0]
+        # Initialize the delta as zero vectors
+        img_delta = torch.zeros_like(img_init)
+        for astep in range(pl_module.adv_steps_img):                
+            #print("This is the step : ", astep)
+            # Need to get the gradient for each batch of image features 
+            img_delta.requires_grad_(True)                
+            # Get all answer of model with adv_delta added to img_feat
+            try :
+                batch['image_{}'.format(i)][0] = (img_init + img_delta)
+                infer1 = pl_module.infer(
+                    batch, mask_text=False, mask_image=False, image_token_type_idx=1)
+                infer2 = pl_module.infer(
+                    batch, mask_text=False, mask_image=False, image_token_type_idx=2)
+                # NlVR2 output
+                cls_feats = torch.cat([infer1["cls_feats"], infer2["cls_feats"]], dim=-1)
+                nlvr2_logits = pl_module.nlvr2_classifier(cls_feats)
+                # Shape [batch_size,2]
+            except:
+                print("problem in step ",astep)
+                sys.exit("STOPP")
+            # Creat loss : reduction "none" because then we do the mean and devide by adv_steps_img
+            nlvr2_labels = torch.tensor(batch["answers"]).to(pl_module.device).long()
+            loss = F.cross_entropy(nlvr2_logits, nlvr2_labels, reduction='none')
+            loss = loss.mean() #/ adv_steps_img
+            # calculate x.grad
+            loss.backward(retain_graph=True)
+            # Get gradient
+            img_delta_grad = img_delta.grad.clone().detach().float()
+            # Get inf_norm gradient (It will be used to normalize the img_delta_grad)
+            denorm = torch.norm(img_delta_grad.view(img_delta_grad.size(0), -1), dim=1, p=float("inf")).view(-1, 1, 1,1)
 
-def pgd(pl_module,batch) : 
-    
-    ## hyper parameter PGD
-    adv_steps_img    = pl_module.config["adv_steps_img"]
-    adv_lr_img       = pl_module.config["adv_lr_img"]
-    adv_max_norm_img = pl_module.config["adv_max_norm_img"]    
-    # Get the original img
-    img_init = batch['image_1'][0]
-    # Initialize the delta as zero vectors
-    img_delta = torch.zeros_like(img_init)
-    for astep in range(adv_steps_img):                
-        #print("This is the step : ", astep)
-        # Need to get the gradient for each batch of image features 
-        img_delta.requires_grad_(True)                
-        # Get all answer of model with adv_delta added to img_feat
-        try :
-            batch['image_1'][0] = (img_init + img_delta)#.to(pl_module.device)
-            infer1 = pl_module.infer(
-                batch, mask_text=False, mask_image=False, image_token_type_idx=1)
-            infer2 = pl_module.infer(
-                batch, mask_text=False, mask_image=False, image_token_type_idx=2)
-            # NlVR2 output
-            cls_feats = torch.cat([infer1["cls_feats"], infer2["cls_feats"]], dim=-1)
-            nlvr2_logits = pl_module.nlvr2_classifier(cls_feats)
-            # Shape [batch_size,2]
-        except:
-            print("problem in step ",astep)
-            sys.exit("STOPP")
-        # Creat loss : reduction "none" because then we do the mean and devide by adv_steps_img
-        nlvr2_labels = torch.tensor(batch["answers"]).to(pl_module.device).long()
-        loss = F.cross_entropy(nlvr2_logits, nlvr2_labels, reduction='none')
-        loss = loss.mean() #/ adv_steps_img
-        # calculate x.grad
-        loss.backward(retain_graph=True)
-        # Get gradient
-        img_delta_grad = img_delta.grad.clone().detach().float()
-        # Get inf_norm gradient (It will be used to normalize the img_delta_grad)
-        denorm = torch.norm(img_delta_grad.view(img_delta_grad.size(0), -1), dim=1, p=float("inf")).view(-1, 1, 1,1)
+            # Clip gradient to Lower Bound
+            denorm = torch.clamp(denorm, min=1e-8)
+            # calculate delta_step  with format img_delta
+            img_delta_step = (pl_module.adv_lr_img * img_delta_grad / denorm).to(img_delta)
+            # Add the calculated step to img_delta (The perturbation)
+            img_delta = (img_delta + img_delta_step).detach()
+            # clip the delta if needed
+            if pl_module.adv_max_norm_img > 0:
+                img_delta = torch.clamp(img_delta, -pl_module.adv_max_norm_img, pl_module.adv_max_norm_img).detach()                      
+    return batch    
 
-        # Clip gradient to Lower Bound
-        denorm = torch.clamp(denorm, min=1e-8)
-        # calculate delta_step  with format img_delta
-        img_delta_step = (adv_lr_img * img_delta_grad / denorm).to(img_delta)
-        # Add the calculated step to img_delta (The perturbation)
-        img_delta = (img_delta + img_delta_step).detach()
-        # clip the delta if needed
-        if adv_max_norm_img > 0:
-            img_delta = torch.clamp(img_delta, -adv_max_norm_img, adv_max_norm_img).detach()                      
-    return batch
-
-def geometric(pl_module, batch) : 
+def compute_geometric_finetuning(pl_module, batch) : 
     
     attack_words = \
-    pl_module.greedy_attacker.adv_attack_samples(pl_module, 
-                                       batch
-                                       #img_k
-                                       #txt_img_queue       
-                                      ) 
+    pl_module.greedy_attacker.adv_attack_samples(pl_module,batch) 
     
     print("This is the Real versus attacked sentences : ")
     
     for i in range(len(batch["text"])):
         print("Real sentence----: ",batch["text"][i])
-        print("Attacked sentence: ",attack_words["attacked_words"][i])
+        print("Attacked sentence: ",attack_words["text"][i])
     
     txt_original_attacked   = {"original": batch["text"],
                                "attacked": attack_words["text"]
                               }
-    batch["text"]         = attack_words["text"]
-    batch["text_ids"]     = attack_words["text_ids"]
-    batch["text_masks"]   = attack_words["text_masks"]
+    batch["text"]          = attack_words["text"]
+    batch["txt_input_ids"] = attack_words["txt_input_ids"]
+    batch["text_masks"]    = attack_words["text_masks"]
 
-    return batch, txt_original_attacked
-    
+    return batch #, txt_original_attacked
+
 def compute_nlvr2(pl_module, batch):
 
     # PGD attack
-    #batch = pgd(pl_module,batch)    
+    #batch = compute_pgd_finetuning(pl_module,batch)    
     # Geometric Attack
-    batch,txt_original_attacked =  geometric(pl_module, batch)
+    batch,txt_original_attacked =  compute_geometric_finetuning(pl_module, batch)
     sys.exit("STOOOOOOOOOOOOOP")    
     # ViLT output
     infer1 = pl_module.infer(
@@ -654,7 +819,10 @@ def init_weights(module):
     elif isinstance(module, nn.LayerNorm):
         module.bias.data.zero_()
         module.weight.data.fill_(1.0)
-
+    elif isinstance(module, nn.Sequential):
+        for sub_layer in module:
+            init_weights(sub_layer)
+            
     if isinstance(module, nn.Linear) and module.bias is not None:
         module.bias.data.zero_()
 

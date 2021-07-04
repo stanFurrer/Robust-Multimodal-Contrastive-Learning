@@ -12,32 +12,6 @@ import vilt.modules.vision_transformer as vit
 from transformers.models.bert.modeling_bert import BertConfig, BertEmbeddings
 from vilt.modules import heads, objectives, vilt_utils
 
-
-class Projector(pl.LightningModule):
-    def __init__(self, input_dim, hidden_dim, output_dim):
-        super().__init__()
-        self.output_dim = output_dim
-        self.input_dim  = input_dim
-        self.hidden_dim = hidden_dim
-        self.img_model  = nn.Sequential(OrderedDict([
-            ('linear1_img',nn.Linear(self.input_dim, self.hidden_dim)),
-            ('norm_img',   nn.LayerNorm(self.hidden_dim)),
-            ('relu_img',   nn.ReLU()),
-            ('linear2_img',nn.Linear(self.hidden_dim, self.output_dim, bias=False))
-        ]))
-
-        self.txt_model = nn.Sequential(OrderedDict([
-            ('linear1', nn.Linear(self.input_dim, self.hidden_dim)),
-            ('norm',    nn.LayerNorm(self.hidden_dim)),
-            ('relu',    nn.ReLU()),
-            ('linear2', nn.Linear(self.hidden_dim, self.output_dim, bias=False))
-        ]))
-
-    def forward(self, img, txt):
-        img = self.img_model(img)
-        txt = self.txt_model(txt)
-        return img, txt
-
 class ViLTransformerSS(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
@@ -84,6 +58,52 @@ class ViLTransformerSS(pl.LightningModule):
             self.mpp_score = heads.MPPHead(bert_config)
             self.mpp_score.apply(objectives.init_weights)
 
+        if config["loss_names"]["moco"] > 0:
+            self.k_text_embeddings = BertEmbeddings(bert_config)
+            self._shadow_layer(self.text_embeddings, self.k_text_embeddings)
+            self.k_token_type_embeddings = nn.Embedding(2, config["hidden_size"])
+            self._shadow_layer(self.token_type_embeddings, self.k_token_type_embeddings)
+            self.k_transformer = getattr(vit, self.hparams.config["vit"])(
+                pretrained=True, config=self.hparams.config
+            )
+            self._shadow_layer(self.transformer, self.k_transformer)
+            self.moco_head = heads.MOCOHead(config["hidden_size"], config["hidden_size"], 128)
+            self.moco_head.apply(objectives.init_weights)
+            self.k_moco_head = heads.MOCOHead(config["hidden_size"], config["hidden_size"], 128)
+            self._shadow_layer(self.moco_head, self.k_moco_head)
+            self.momentum = config["momentum"]
+            self.temperature = config["temperature"]
+            self.text_attack = config["text_attack"]
+            self.image_attack = config["image_attack"]
+            self.num_negative = config["num_negative"]
+            #param attacks
+            self.n_candidates = config["n_candidates"]
+            self.max_loops = config["max_loops"]     
+            self.sim_thred = config["sim_thred"]      
+            self.cos_sim = config["cos_sim"]     
+            self.synonym = config["synonym"]    
+            self.embedding_path = config["embedding_path"] 
+            self.sim_path = config["sim_path"]    
+            self.adv_steps_img = config["adv_steps_img"]  
+            self.adv_lr_img = config["adv_lr_img"]     
+            self.adv_max_norm_img = config["adv_max_norm_img"] 
+            
+            if self.text_attack:
+                self.register_buffer("text_queue", torch.randn(128, self.num_negative))
+                self.text_queue = nn.functional.normalize(self.text_queue, dim=0)
+                self.register_buffer("text_queue_ptr", torch.zeros(1, dtype=torch.long))
+                self.tokenizer       = BertTokenizer.from_pretrained('bert-base-uncased')
+                print("----Loading greedy attack ----")
+                self.greedy_attacker = GreedyAttack(args = config,
+                                            n_candidates = config["n_candidates"],
+                                            max_loops    = config["max_loops"],    
+                                            tokenizer    = self.tokenizer)
+                print("----Greedy attack Loaded ----")
+            if self.image_attack:
+                self.register_buffer("image_queue", torch.randn(128, self.num_negative))
+                self.image_queue = nn.functional.normalize(self.image_queue, dim=0)
+                self.register_buffer("image_queue_ptr", torch.zeros(1, dtype=torch.long))            
+               
         # ===================== Downstream ===================== #
         if (
             self.hparams.config["load_path"] != ""
@@ -139,17 +159,17 @@ class ViLTransformerSS(pl.LightningModule):
             self.load_state_dict(state_dict, strict=False)
             
         # ===================== Initiate Geometric class =========================
+        #print("\n\n Flag1. Creating greedy_attacker class")
+        #self.greedy_attacker = GreedyAttack(args         = self.config,
+        #                                    n_candidates = config["n_candidates"],
+        #                                    max_loops    = config["max_loops"],    
+        #                                    tokenizer    = self.tokenizer)        
+        #print("\n Flag1. Creating greedy_attacker class Done \n")    
         
-        self.projector       = Projector(config["hidden_size"],config["hidden_size"],128)
-        self.config          = config 
-        # No necessary to be there
-        self.tokenizer       = BertTokenizer.from_pretrained('bert-base-uncased')   
-        print("\n\n Flag1. Creating greedy_attacker class")
-        self.greedy_attacker = GreedyAttack(args         = self.config,
-                                            n_candidates = config["n_candidates"],
-                                            max_loops    = config["max_loops"],    
-                                            tokenizer    = self.tokenizer)        
-        print("\n Flag1. Creating greedy_attacker class Done \n")    
+    def _shadow_layer(self, q_layer, k_layer):
+        for param_q, param_k in zip(q_layer.parameters(), k_layer.parameters()):
+            param_k.data.copy_(param_q.data)
+            param_k.requires_grad = False
         
     def get_input_embeddings(self):
         return self.text_embeddings.word_embeddings
@@ -232,6 +252,83 @@ class ViLTransformerSS(pl.LightningModule):
 
         return ret
 
+    def infer_k(
+        self,
+        batch,
+        mask_text=False,
+        mask_image=False,
+        image_token_type_idx=1,
+        image_embeds=None,
+        image_masks=None,
+    ):
+        # if f"image_{image_token_type_idx - 1}" in batch:
+        #     imgkey = f"image_{image_token_type_idx - 1}"
+        # else:
+        #     imgkey = "image"
+        imgkey = "image"
+
+        do_mlm = "_mlm" if mask_text else ""
+        text_ids = batch[f"text_ids{do_mlm}"]
+        # text_labels = batch[f"text_labels{do_mlm}"]
+        text_masks = batch[f"text_masks"]
+        text_embeds = self.k_text_embeddings(text_ids)
+
+        # if image_embeds is None and image_masks is None:
+        img = batch[imgkey][0]
+        (
+            image_embeds,
+            image_masks,
+            patch_index,
+            image_labels,
+        ) = self.k_transformer.visual_embed(
+            img,
+            max_image_len=self.hparams.config["max_image_len"],
+            mask_it=mask_image,
+        )
+        # else:
+        #     patch_index, image_labels = (
+        #         None,
+        #         None,
+        #     )
+
+        text_embeds, image_embeds = (
+            text_embeds + self.k_token_type_embeddings(torch.zeros_like(text_masks)),
+            image_embeds
+            + self.k_token_type_embeddings(
+                torch.full_like(image_masks, image_token_type_idx)
+            ),
+        )
+
+        co_embeds = torch.cat([text_embeds, image_embeds], dim=1)
+        co_masks = torch.cat([text_masks, image_masks], dim=1)
+
+        x = co_embeds
+
+        for i, blk in enumerate(self.k_transformer.blocks):
+            x, _attn = blk(x, mask=co_masks)
+
+        x = self.k_transformer.norm(x)
+        text_feats, image_feats = (
+            x[:, : text_embeds.shape[1]],
+            x[:, text_embeds.shape[1] :],
+        )
+        # cls_feats = self.pooler(x)
+
+        ret = {
+            "text_feats": text_feats,
+            "image_feats": image_feats,
+            # "cls_feats": cls_feats,
+            # "raw_cls_feats": x[:, 0],
+            # "image_labels": image_labels,
+            "image_masks": image_masks,
+            # "text_labels": text_labels,
+            "text_ids": text_ids,
+            "text_masks": text_masks,
+            "patch_index": patch_index,
+        }
+
+        return ret    
+    
     def forward(self, batch):
         ret = dict()
         if len(self.current_tasks) == 0:
@@ -262,6 +359,10 @@ class ViLTransformerSS(pl.LightningModule):
         if "irtr" in self.current_tasks:
             ret.update(objectives.compute_irtr(self, batch))
 
+        # MoCo Contrasive framework
+        if "moco" in self.current_tasks:
+            ret.update(objectives.compute_moco_contrastive(self, batch))            
+                
         return ret
 
     def training_step(self, batch, batch_idx):
