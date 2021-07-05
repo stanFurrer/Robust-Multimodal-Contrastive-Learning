@@ -215,7 +215,7 @@ def task_finetune_nlvr2_randaug_attacked():
     learning_rate = 1e-4
     # Attacks parameters
     text_attack = True
-    image_attack = False    
+    image_attack = True    
     # PGD
     adv_steps_img = 5
     adv_lr_img = 0.5

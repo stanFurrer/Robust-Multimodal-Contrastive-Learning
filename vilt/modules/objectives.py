@@ -519,11 +519,8 @@ def compute_pgd_finetuning(pl_module,batch) :
         # Initialize the delta as zero vectors
         img_delta = torch.zeros_like(img_init)
         for astep in range(pl_module.adv_steps_img):                
-            #print("This is the step : ", astep)
-            # Need to get the gradient for each batch of image features 
             img_delta.requires_grad_(True)                
             # Get all answer of model with adv_delta added to img_feat
-            #try :
             batch['image_{}'.format(i)][0] = (img_init + img_delta)
             infer1 = pl_module.infer(
                 batch, mask_text=False, mask_image=False, image_token_type_idx=1)
@@ -532,10 +529,6 @@ def compute_pgd_finetuning(pl_module,batch) :
             # NlVR2 output
             cls_feats = torch.cat([infer1["cls_feats"], infer2["cls_feats"]], dim=-1)
             nlvr2_logits = pl_module.nlvr2_classifier(cls_feats)
-            # Shape [batch_size,2]
-            #except:
-            #    print("problem in step ",astep)
-            #    sys.exit("STOPP")
             # Creat loss : reduction "none" because then we do the mean and devide by adv_steps_img
             nlvr2_labels = torch.tensor(batch["answers"]).to(pl_module.device).long()
             loss = F.cross_entropy(nlvr2_logits, nlvr2_labels, reduction='none')

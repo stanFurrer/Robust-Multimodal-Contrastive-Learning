@@ -152,8 +152,6 @@ class GreedyAttack_cross_entropy:
        
     def get_inputs(self,sentences, tokenizer, device):
         outputs        = tokenizer(sentences, truncation=True, padding=True,max_length = self.max_length)
-        
-        
         input_ids      = outputs["input_ids"]
         attention_mask = outputs["attention_mask"]
 
@@ -190,8 +188,8 @@ class GreedyAttack_cross_entropy:
         def pro_grad_hook(module, grad_in, grad_out):
             pro_grads.append(grad_out[0])        
             
-        emb_hook = embedding_layer.register_backward_hook(emb_grad_hook)
-        pro_hook = projector_layer.register_backward_hook(pro_grad_hook)
+        emb_hook = embedding_layer.register_full_backward_hook(emb_grad_hook)
+        pro_hook = projector_layer.register_full_backward_hook(pro_grad_hook)
 
         self.pl_module.zero_grad() # Isn't it a problem for accumulated gradient to zeros grad here----
         
@@ -213,7 +211,7 @@ class GreedyAttack_cross_entropy:
             nlvr2_labels = batch["answers"]
             nlvr2_labels = torch.tensor(nlvr2_labels).to(self.pl_module.device).long()
             nlvr2_loss   = F.cross_entropy(nlvr2_logits, nlvr2_labels)
-            nlvr2_loss.backward()
+            nlvr2_loss.backward(retain_graph=True)
        
         grads   = emb_grads[0].cpu().numpy() ### To reflect if it's correct---
         # Shape is [batch_size,len_txt,768] # this is grads shape (8, 40, 768)
@@ -446,7 +444,7 @@ class GreedyAttack_cross_entropy:
                     position = 0
                     for idx in range(len(cur_words[i])):
                         length = len(self.tokenizer.tokenize(cur_words[i][idx]))
-                        if position + length >=  self.max_length : # Avoid to get sentence bigger than limit
+                        if position + length >=  self.max_length : # if Sentence too big
                             continue 
                         self.words_to_sub_words[i][idx] =\
                         np.arange(position, position+length)

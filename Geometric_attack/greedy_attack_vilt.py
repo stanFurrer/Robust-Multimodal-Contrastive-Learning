@@ -137,7 +137,7 @@ class GreedyAttack:
         return index_scores
        
     def get_inputs(self,sentences, tokenizer, device):
-        outputs        = tokenizer(sentences, truncation=True, padding=True)
+        outputs        = tokenizer(sentences, truncation=True, padding=True,max_length = self.max_length)
         input_ids      = outputs["input_ids"]
         attention_mask = outputs["attention_mask"]
 
@@ -175,10 +175,10 @@ class GreedyAttack:
         def pro_grad_hook(module, grad_in, grad_out):
             pro_grads.append(grad_out[0])        
             
-        emb_hook = embedding_layer.register_backward_hook(emb_grad_hook)
-        pro_hook = projector_layer.register_backward_hook(pro_grad_hook)
+        emb_hook = embedding_layer.register_full_backward_hook(emb_grad_hook)
+        pro_hook = projector_layer.register_full_backward_hook(pro_grad_hook)
 
-        self.pl_module.zero_grad() # Isn't it a problem for accumulated gradient to zeros grad here
+        self.pl_module.zero_grad() # TO-DO problem for accumulated gradient
         
         with torch.enable_grad(): 
             batch["text_ids"]   = input_ids
@@ -417,7 +417,7 @@ class GreedyAttack:
             batch_c['text_ids']        = all_new_text_ids
             batch_c['text_masks']      = all_new_text_masks
             
-            outputs = self.split_forward(batch_c)  # torch.Size([sum(all_num), 768])
+            outputs = self.split_forward(batch_c)  
             outputs = torch.split(outputs, all_num)
             count = 0
             
@@ -437,6 +437,8 @@ class GreedyAttack:
                     position = 0
                     for idx in range(len(cur_words[i])):
                         length = len(self.tokenizer.tokenize(cur_words[i][idx]))
+                        if position + length >=  self.max_length : # if Sentence too big
+                            continue                         
                         self.words_to_sub_words[i][idx] =\
                         np.arange(position, position+length)
                         position += length
