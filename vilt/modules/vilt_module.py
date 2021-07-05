@@ -3,6 +3,7 @@ import os #
 from collections import OrderedDict #
 from transformers import BertTokenizer#
 from Geometric_attack.greedy_attack_vilt import GreedyAttack #
+from Geometric_attack.greedy_attack_vilt_cross_entropy import GreedyAttack_cross_entropy #
 ####
 
 import torch
@@ -92,7 +93,7 @@ class ViLTransformerSS(pl.LightningModule):
                 self.register_buffer("text_queue", torch.randn(128, self.num_negative))
                 self.text_queue = nn.functional.normalize(self.text_queue, dim=0)
                 self.register_buffer("text_queue_ptr", torch.zeros(1, dtype=torch.long))
-                self.tokenizer       = BertTokenizer.from_pretrained('bert-base-uncased')
+                self.tokenizer = BertTokenizer.from_pretrained(config["tokenizer"])
                 print("----Loading greedy attack ----")
                 self.greedy_attacker = GreedyAttack(args = config,
                                             n_candidates = config["n_candidates"],
@@ -139,6 +140,43 @@ class ViLTransformerSS(pl.LightningModule):
             self.token_type_embeddings.weight.data[0, :] = emb_data[0, :]
             self.token_type_embeddings.weight.data[1, :] = emb_data[1, :]
             self.token_type_embeddings.weight.data[2, :] = emb_data[1, :]
+            
+        if self.hparams.config["loss_names"]["nlvr2_attacked"] > 0:
+            self.nlvr2_classifier = nn.Sequential(OrderedDict([
+                ('linear1_nlvr2', nn.Linear(hs * 2, hs * 2)),
+                ('norm_nlvr2' , nn.LayerNorm(hs * 2)),
+                ('gelu_nlvr2', nn.GELU()),
+                ('linear2_nlvr2',nn.Linear(hs * 2, 2)),
+            ]))
+            self.nlvr2_classifier.apply(objectives.init_weights)
+            emb_data = self.token_type_embeddings.weight.data
+            self.token_type_embeddings = nn.Embedding(3, hs)
+            self.token_type_embeddings.apply(objectives.init_weights)
+            self.token_type_embeddings.weight.data[0, :] = emb_data[0, :]
+            self.token_type_embeddings.weight.data[1, :] = emb_data[1, :]
+            self.token_type_embeddings.weight.data[2, :] = emb_data[1, :]   
+            #param attacks
+            self.image_attack = config["image_attack"]
+            self.text_attack = config["text_attack"]
+            if config["text_attack"] : 
+                self.n_candidates = config["n_candidates"]
+                self.max_loops = config["max_loops"]     
+                self.sim_thred = config["sim_thred"]      
+                self.cos_sim = config["cos_sim"]     
+                self.synonym = config["synonym"]    
+                self.embedding_path = config["embedding_path"] 
+                self.sim_path = config["sim_path"]
+                self.tokenizer       = BertTokenizer.from_pretrained('bert-base-uncased')
+                print("----Loading GreedyAttack_cross_entropy ----")
+                self.greedy_attacker = GreedyAttack_cross_entropy(args = config,
+                                            n_candidates = self.n_candidates,
+                                            max_loops    = self.max_loops,    
+                                            tokenizer    = self.tokenizer)
+                print("----Greedy GreedyAttack_cross_entropy DONE ----")               
+            if config["image_attack"] : 
+                self.adv_steps_img = config["adv_steps_img"]  
+                self.adv_lr_img = config["adv_lr_img"]     
+                self.adv_max_norm_img = config["adv_max_norm_img"] 
 
         if self.hparams.config["loss_names"]["irtr"] > 0:
             self.rank_output = nn.Linear(hs, 1)
@@ -157,15 +195,7 @@ class ViLTransformerSS(pl.LightningModule):
             ckpt = torch.load(self.hparams.config["load_path"], map_location="cpu")
             state_dict = ckpt["state_dict"]
             self.load_state_dict(state_dict, strict=False)
-            
-        # ===================== Initiate Geometric class =========================
-        #print("\n\n Flag1. Creating greedy_attacker class")
-        #self.greedy_attacker = GreedyAttack(args         = self.config,
-        #                                    n_candidates = config["n_candidates"],
-        #                                    max_loops    = config["max_loops"],    
-        #                                    tokenizer    = self.tokenizer)        
-        #print("\n Flag1. Creating greedy_attacker class Done \n")    
-        
+                      
     def _shadow_layer(self, q_layer, k_layer):
         for param_q, param_k in zip(q_layer.parameters(), k_layer.parameters()):
             param_k.data.copy_(param_q.data)
@@ -354,6 +384,10 @@ class ViLTransformerSS(pl.LightningModule):
         # Natural Language for Visual Reasoning 2
         if "nlvr2" in self.current_tasks:
             ret.update(objectives.compute_nlvr2(self, batch))
+            
+        # Natural Language for Visual Reasoning 2
+        if "nlvr2_attacked" in self.current_tasks:
+            ret.update(objectives.compute_nlvr2_attack(self, batch))    
 
         # Image Retrieval and Text Retrieval
         if "irtr" in self.current_tasks:

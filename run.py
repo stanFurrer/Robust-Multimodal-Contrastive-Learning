@@ -26,8 +26,8 @@ def main(_config):
     #_config["adv_lr_img"]       = 0.5
     #_config["adv_max_norm_img"] = 0.1
 
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
+    #os.environ['MASTER_ADDR'] = 'localhost'
+    #os.environ['MASTER_PORT'] = '12355'
     
     pl.seed_everything(_config["seed"])
 

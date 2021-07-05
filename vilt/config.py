@@ -12,6 +12,7 @@ def _loss_names(d):
         "vqa": 0,
         "nlvr2": 0,
         "irtr": 0,
+        "nlvr2_attacked":0
     }
     ret.update(d)
     return ret
@@ -120,8 +121,8 @@ def task_moco():
     num_negative = 65536
     momentum = 0.999
     temperature = 0.07
-    text_attack = True
-    image_attack = False
+    text_attack = False
+    image_attack = True
     loss_names = _loss_names({"moco": 1})
     # batch_size = 4096
     batch_size = 16
@@ -185,8 +186,8 @@ def task_finetune_nlvr2():
     warmup_steps = 0.1
     draw_false_image = 0
     learning_rate = 1e-4
-
-
+    
+    
 @ex.named_config
 def task_finetune_nlvr2_randaug():
     exp_name = "finetune_nlvr2_randaug"
@@ -200,7 +201,34 @@ def task_finetune_nlvr2_randaug():
     draw_false_image = 0
     learning_rate = 1e-4
 
-
+@ex.named_config
+def task_finetune_nlvr2_randaug_attacked():
+    exp_name = "finetune_nlvr2_randaug_attacked"
+    datasets = ["nlvr2"]
+    train_transform_keys = ["pixelbert_randaug"]
+    loss_names = _loss_names({"nlvr2_attacked": 1})
+    batch_size = 128
+    max_epoch = 10
+    max_steps = None
+    warmup_steps = 0.1
+    draw_false_image = 0
+    learning_rate = 1e-4
+    # Attacks parameters
+    text_attack = True
+    image_attack = False    
+    # PGD
+    adv_steps_img = 5
+    adv_lr_img = 0.5
+    adv_max_norm_img = 0.1
+    #Geometric
+    n_candidates = 10
+    max_loops = 10
+    sim_thred = 0.5
+    cos_sim = True
+    synonym = "cos_sim"
+    embedding_path = './Geometric_attack/counter-fitted-vectors.txt'
+    sim_path = 'cos_sim_counter_fitting.npy'       
+    
 @ex.named_config
 def task_finetune_vqa():
     exp_name = "finetune_vqa"
