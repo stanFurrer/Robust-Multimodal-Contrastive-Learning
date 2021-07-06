@@ -102,17 +102,19 @@ def compute_moco_contrastive(pl_module, batch):
     def _dequeue_and_enqueue(keys, queue_type):
         keys = _concat_all_gather(keys)
         batch_size = keys.shape[0]
-        if pl_module.num_negative % batch_size != 0:
+        if not (pl_module.per_step_bs == batch_size):
             return
+        # if pl_module.num_negative % batch_size != 0:
+        #     return
         if queue_type == 'text':
             ptr = int(pl_module.text_queue_ptr)
-            assert pl_module.num_negative % batch_size == 0
+            # assert pl_module.num_negative % batch_size == 0
             pl_module.text_queue[:, ptr:ptr+batch_size] = keys.T
             ptr = (ptr + batch_size) % pl_module.num_negative
             pl_module.text_queue_ptr[0] = ptr
         if queue_type == 'image':
             ptr = int(pl_module.image_queue_ptr)
-            assert pl_module.num_negative % batch_size == 0
+            # assert pl_module.num_negative % batch_size == 0
             pl_module.image_queue[:, ptr:ptr + batch_size] = keys.T
             ptr = (ptr + batch_size) % pl_module.num_negative
             pl_module.image_queue_ptr[0] = ptr

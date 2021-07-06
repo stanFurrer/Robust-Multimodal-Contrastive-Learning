@@ -1,5 +1,6 @@
 import cv2
 import re
+import sys
 import warnings
 import argparse
 import requests
@@ -8,17 +9,19 @@ import os
 import json
 from tqdm import tqdm
 from PIL import Image
-import pickle
 from datetime import datetime
 import torch.multiprocessing as mp
-
-from .utils import build_cfg, print_segment_line
 
 
 headers = {
     'User-Agent': 'Googlebot-Image/1.0',
     'X-Forwarded-For': '64.18.15.200'
 }
+
+
+def print_segment_line(info=''):
+    sys.stderr.flush()
+    print((' ' + info.strip() + ' ').center(50, '='), flush=True)
 
 
 def clean_caption(cap):
@@ -32,7 +35,8 @@ def clean_caption(cap):
 
 
 def delete_invalid(index, path):
-    image_dir = os.path.join(path, str(index) + '.jpg')
+    image_name = '{:0>7d}.jpg'.format(index)
+    image_dir = os.path.join(path, image_name[:4], image_name)
 
     if not os.path.isfile(image_dir):
         return
@@ -47,7 +51,14 @@ def delete_invalid(index, path):
 
 
 def download_image(index, url, path):
-    image_dir = os.path.join(path, str(index) + '.jpg')
+    image_name = '{:0>7d}.jpg'.format(index)
+    image_dir = os.path.join(path, image_name[:4], image_name)
+
+    if not os.path.isdir(os.path.join(path, image_name[:4])):
+        try:
+            os.mkdir(os.path.join(path, image_name[:4]))
+        except (FileExistsError) as e:
+            print("Multi process conflict by creating {}, but it's fine.".format(image_dir))
 
     if os.path.isfile(image_dir):
         return
@@ -62,57 +73,14 @@ def download_image(index, url, path):
 
 
 def build_index(index, caption, data_dir):
-    image_file = os.path.join(data_dir, str(index) + '.jpg')
+    image_name = '{:0>7d}.jpg'.format(index)
+    image_file = os.path.join(data_dir, image_name[:4], image_name)
     img = cv2.imread(image_file)
 
     if img is not None:  # check if image is valid
-        return {
-            'img_id': index,
-            'img_fn': str(index) + '.jpg',
-            'width': img.shape[1],
-            'height': img.shape[0],
-            'labels': clean_caption(caption)
-        }
+        return (os.path.join(data_dir, image_name[:4], image_name), caption)
 
     return None
-
-
-def get_image_data(entry, data_dir, extractor):
-    img_dir = entry['img_fn']
-    im = cv2.imread(os.path.join(data_dir, img_dir))
-    features = extractor.extract_feature(im)
-
-    return {
-        'image_features': features['features'],
-        'mrm_labels': features['scores'],
-        'boxes': features['boxes']
-    }
-
-
-def main(rank, data, split, args):
-    if args.coco_feature:
-        from .coco_feature_extractor import COCOFeatureExtractor
-        extractor = COCOFeatureExtractor(args.config, rank)
-    else:
-        from .feature_extractor import FeatureExtractor
-        extractor = FeatureExtractor(args.config, rank)
-    local_data = data[rank::args.gpu_num]
-    start_time = datetime.now()
-    data_dir = os.path.join(args.data_dir, split)
-
-    for i, entry in enumerate(local_data):
-        save_path = os.path.join(args.output_dir, split, str(entry['img_id']) + '.pkl')
-        if os.path.isfile(save_path) and args.skip_generated:
-            print('Skipped {}'.format(entry['img_fn']), flush=True)
-            continue
-        image_data = get_image_data(entry=entry, data_dir=data_dir, extractor=extractor)
-        pickle.dump(image_data, open(save_path, 'wb'))
-        print('GPU{}, {}/{}, ETA: {}'.format(
-            rank,
-            i,
-            len(local_data),
-            str((len(local_data) - (i + 1)) / (i + 1) * (datetime.now() - start_time))
-        ), flush=True)
 
 
 if __name__ == '__main__':
@@ -123,10 +91,6 @@ if __name__ == '__main__':
                         help='Download images')
     parser.add_argument('--data_dir', type=str, default=None,
                         help='download/load images from this directory')
-    parser.add_argument('--no_img_feat', action='store_true',
-                        help='not generate image features')
-    parser.add_argument('--output_dir', type=str, required=True,
-                        help='output directory')
     parser.add_argument('--annot_dir', type=str, required=True,
                         help='CC annotation directory with '
                              '"Train_GCC-training.tsv", and "Validation_GCC-1.1.0-Validation.tsv"')
@@ -134,28 +98,12 @@ if __name__ == '__main__':
                         help='The maximum index')
     parser.add_argument('--n_jobs', type=int, default=4,
                         help='number of jobs for downloading')
-    parser.add_argument('--train_ratio', type=float, default=0.9,
-                        help='proportion of training set')
-    parser.add_argument('--gpu_num', default=1, type=int,
-                        help='number of GPUs in total')
-    parser.add_argument('--config', type=str, default=None,
-                    help='path extractor config')
     parser.add_argument('--delete_invalid', action='store_true',
                         help='Delete invalid images in data_dir')
-    parser.add_argument('--skip_generated', action='store_true',
-                    help='skip generated image features')
-    parser.add_argument('--coco_feature', action='store_true',
-                        help='Use old coco feature extractor')
     args = parser.parse_args()
 
     if args.download and args.data_dir is None:
         raise ValueError('if --download is set, --data_dir must be specified')
-
-    if args.config is None:
-        if args.coco_feature:
-            args.config = 'COCO-InstanceSegmentation/mask_rcnn_R_101_C4_3x.yaml'
-        else:
-            args.config = 'config/extract_config.yaml'
 
     with open(os.path.join(args.annot_dir, 'Train_GCC-training.tsv')) as f:
         train_file = [list(map(lambda x: x.strip(), line.split('\t'))) for line in f.readlines()]
@@ -163,7 +111,7 @@ if __name__ == '__main__':
     with open(os.path.join(args.annot_dir, 'Validation_GCC-1.1.0-Validation.tsv')) as f:
         val_file = [list(map(lambda x: x.strip(), line.split('\t'))) for line in f.readlines()]
 
-    split_dict = {'train': train_file, 'val': val_file}
+    split_dict = {'images_train': train_file, 'images_val': val_file}
 
     # make directory for splits
     for split in split_dict.keys():
@@ -193,39 +141,23 @@ if __name__ == '__main__':
     # build index of valid images
     train_captions = [x[0] for x in train_file]
     train_data = Parallel(n_jobs=args.n_jobs)(
-        delayed(build_index)(index, caption, os.path.join(args.data_dir, 'train'))
+        delayed(build_index)(index, caption, os.path.join(args.data_dir, 'images_train'))
         for index, caption in enumerate(tqdm(train_captions[:args.max_index]))
     )
     train_data = list(filter(lambda x: x is not None, train_data))
 
     val_captions = [x[0] for x in val_file]
     val_data = Parallel(n_jobs=args.n_jobs)(
-        delayed(build_index)(index, caption, os.path.join(args.data_dir, 'val'))
+        delayed(build_index)(index, caption, os.path.join(args.data_dir, 'images_val'))
         for index, caption in enumerate(tqdm(val_captions[:args.max_index]))
     )
     val_data = list(filter(lambda x: x is not None, val_data))
 
-    json.dump(train_data, open(os.path.join(args.output_dir, 'train.json'), 'w'))
-    json.dump(val_data, open(os.path.join(args.output_dir, 'val.json'), 'w'))
-
-    split_dict = {'train': train_data, 'val': val_data}
-
-    # make directory for splits
-    for split in split_dict.keys():
-        path = os.path.join(args.output_dir, split)
-        if not os.path.isdir(path):
-            os.mkdir(path)
-
+    json.dump(train_data, open(os.path.join(args.data_dir, 'train_annot.json'), 'w'))
+    json.dump(val_data, open(os.path.join(args.data_dir, 'val_annot.json'), 'w'))
+    
     print_segment_line("Build index complete in: " + str(datetime.now() - start))
 
-    start = datetime.now()
-    if not args.no_img_feat:
-        for split, data in split_dict.items():
-            print_segment_line('extracting image features for {} set'.format(split))
-            mp.spawn(
-                main,
-                args=(data, split, args),
-                nprocs=args.gpu_num,
-                join=True
-            )
-        print_segment_line("Build features complets in " + str(datetime.now() - start))
+    make_arrow(args.data_dir, '../../Datasets/ViLT')
+
+    print_segment_line("Build ViLT complete!")

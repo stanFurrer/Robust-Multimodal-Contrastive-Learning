@@ -8,3 +8,7 @@ vilt/modules/__pycache__/
 vilt/transforms/__pycache__/
 vilt/utils/__pycache__/
 *.sh
+weights/
+result/
+*_res.txt
+*_err.txt

@@ -34,6 +34,7 @@ class ViLTransformerSS(pl.LightningModule):
                 pretrained=True, config=self.hparams.config
             )
         else:
+            print(self.hparams.config["load_path"])
             self.transformer = getattr(vit, self.hparams.config["vit"])(
                 pretrained=False, config=self.hparams.config
             )
@@ -71,6 +72,7 @@ class ViLTransformerSS(pl.LightningModule):
             self.text_attack = config["text_attack"]
             self.image_attack = config["image_attack"]
             self.num_negative = config["num_negative"]
+            self.per_step_bs = config["per_gpu_batchsize"] * config["num_gpus"] * config["num_nodes"]
             if self.text_attack:
                 self.register_buffer("text_queue", torch.randn(128, self.num_negative))
                 self.text_queue = nn.functional.normalize(self.text_queue, dim=0)

@@ -102,8 +102,7 @@ def env_dandelin():
 @ex.named_config
 def task_mlm_itm():
     exp_name = "mlm_itm"
-    # datasets = ["coco", "vg", "sbu", "gcc"]
-    datasets = ["coco"]
+    datasets = ["coco", "vg", "sbu", "gcc"]
     loss_names = _loss_names({"itm": 1, "mlm": 1})
     batch_size = 4096
     max_epoch = 10
@@ -122,10 +121,10 @@ def task_moco():
     image_attack = True
     loss_names = _loss_names({"moco": 1})
     # batch_size = 4096
-    batch_size = 16
+    batch_size = 4096 
     max_epoch = 10
     max_image_len = 200
-    test_only = True
+    # test_only = True
 
 
 @ex.named_config
