@@ -27,16 +27,16 @@ class MOCOHead(nn.Module):
         self.input_dim  = input_dim
         self.hidden_dim = hidden_dim
         self.img_model  = nn.Sequential(OrderedDict([
-            ('linear1_img',nn.Linear(self.input_dim, self.hidden_dim)),
-            ('norm_img',   nn.LayerNorm(self.hidden_dim)),
-            ('relu_img',   nn.ReLU()),
-            ('linear2_img',nn.Linear(self.hidden_dim, self.output_dim, bias=False))
+            ('linear1_img', nn.Linear(self.input_dim, self.hidden_dim)),
+            ('LayerNorm',   nn.LayerNorm(self.hidden_dim)),
+            ('LayerNorm',   nn.ReLU()),
+            ('linear2_img', nn.Linear(self.hidden_dim, self.output_dim, bias=False))
         ]))
 
         self.txt_model = nn.Sequential(OrderedDict([
             ('linear1', nn.Linear(self.input_dim, self.hidden_dim)),
-            ('norm',    nn.LayerNorm(self.hidden_dim)),
-            ('relu',    nn.ReLU()),
+            ('LayerNorm', nn.LayerNorm(self.hidden_dim)),
+            ('relu', nn.ReLU()),
             ('linear2', nn.Linear(self.hidden_dim, self.output_dim, bias=False))
         ]))
 

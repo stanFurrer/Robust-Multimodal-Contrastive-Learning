@@ -12,3 +12,17 @@ weights/
 result/
 *_res.txt
 *_err.txt
+lightning_logs/
+__pycache__/
+.idea/
+requirements.txt.save
+cos_sim_counter_fitting.npy
+Geometric_attack/.ipynb_checkpoints/
+Geometric_attack/counter-fitted-vectors.txt
+Geometric_attack/deepfool.py
+Geometric_attack/greedy_attack.py
+Geometric_attack/greedy_attack_cl.py
+Geometric_attack/greedy_attack_cl_RMCL.py
+Geometric_attack/greedy_attack_cl_RMCL_print.py
+Geometric_attack/greedy_attack_with_comment.py
+

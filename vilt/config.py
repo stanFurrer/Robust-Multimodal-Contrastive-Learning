@@ -12,6 +12,7 @@ def _loss_names(d):
         "vqa": 0,
         "nlvr2": 0,
         "irtr": 0,
+        "nlvr2_attacked":0
     }
     ret.update(d)
     return ret
@@ -71,7 +72,21 @@ def config():
     image_attack = False
     momentum = 1.0
     temperature = 1.0
-
+    
+    # attacks
+    #PGD
+    adv_steps_img = 5
+    adv_lr_img = 0.5
+    adv_max_norm_img = 0.1
+    #Geometric
+    n_candidates = 10
+    max_loops = 10
+    sim_thred = 0.5
+    cos_sim = True
+    synonym = "cos_sim"
+    embedding_path = './Geometric_attack/counter-fitted-vectors.txt'
+    sim_path = 'cos_sim_counter_fitting.npy'
+    
     # PL Trainer Setting
     resume_from = None
     fast_dev_run = False
@@ -88,7 +103,6 @@ def config():
     num_workers = 8
     precision = 16
 
-
 # Named configs for "environment" which define gpus and nodes, and paths
 @ex.named_config
 def env_dandelin():
@@ -97,17 +111,7 @@ def env_dandelin():
     num_gpus = 8
     num_nodes = 1
 
-
 # Named configs for "task" which define datasets, loss_names and desired batch_size, warmup_steps, epochs, and exp_name
-@ex.named_config
-def task_mlm_itm():
-    exp_name = "mlm_itm"
-    datasets = ["coco", "vg", "sbu", "gcc"]
-    loss_names = _loss_names({"itm": 1, "mlm": 1})
-    batch_size = 4096
-    max_epoch = 10
-    max_image_len = 200
-
 
 @ex.named_config
 def task_moco():
@@ -117,14 +121,37 @@ def task_moco():
     num_negative = 65536
     momentum = 0.999
     temperature = 0.07
-    text_attack = True
+    text_attack = False
     image_attack = True
     loss_names = _loss_names({"moco": 1})
     # batch_size = 4096
-    batch_size = 4096 
+    batch_size = 16
     max_epoch = 10
     max_image_len = 200
-    # test_only = True
+    test_only = True
+    # Attacks parameters
+    # PGD
+    adv_steps_img = 5
+    adv_lr_img = 0.5
+    adv_max_norm_img = 0.1
+    #Geometric
+    n_candidates = 10
+    max_loops = 10
+    sim_thred = 0.5
+    cos_sim = True
+    synonym = "cos_sim"
+    embedding_path = './Geometric_attack/counter-fitted-vectors.txt'
+    sim_path = 'cos_sim_counter_fitting.npy'
+    
+@ex.named_config
+def task_mlm_itm():
+    exp_name = "mlm_itm"
+    #datasets = ["coco", "vg", "sbu", "gcc"]
+    datasets = ["coco"]
+    loss_names = _loss_names({"itm": 1, "mlm": 1})
+    batch_size = 4096
+    max_epoch = 10
+    max_image_len = 200
 
 
 @ex.named_config
@@ -159,8 +186,8 @@ def task_finetune_nlvr2():
     warmup_steps = 0.1
     draw_false_image = 0
     learning_rate = 1e-4
-
-
+    
+    
 @ex.named_config
 def task_finetune_nlvr2_randaug():
     exp_name = "finetune_nlvr2_randaug"
@@ -174,7 +201,34 @@ def task_finetune_nlvr2_randaug():
     draw_false_image = 0
     learning_rate = 1e-4
 
-
+@ex.named_config
+def task_finetune_nlvr2_randaug_attacked():
+    exp_name = "finetune_nlvr2_randaug_attacked"
+    datasets = ["nlvr2"]
+    train_transform_keys = ["pixelbert_randaug"]
+    loss_names = _loss_names({"nlvr2_attacked": 1})
+    batch_size = 128
+    max_epoch = 10
+    max_steps = None
+    warmup_steps = 0.1
+    draw_false_image = 0
+    learning_rate = 1e-4
+    # Attacks parameters
+    text_attack = True
+    image_attack = True
+    # PGD
+    adv_steps_img = 5
+    adv_lr_img = 0.5
+    adv_max_norm_img = 0.1
+    #Geometric
+    n_candidates = 10
+    max_loops = 10
+    sim_thred = 0.5
+    cos_sim = True
+    synonym = "cos_sim"
+    embedding_path = './Geometric_attack/counter-fitted-vectors.txt'
+    sim_path = 'cos_sim_counter_fitting.npy'
+    
 @ex.named_config
 def task_finetune_vqa():
     exp_name = "finetune_vqa"
