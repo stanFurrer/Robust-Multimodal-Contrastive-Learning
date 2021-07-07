@@ -23,6 +23,7 @@ We provide five pretrained weights
 
 ## Requirement for the Geometric inspired attack counter-fitting word embeddings
 Download : [counter-fitting word embeddings.](https://drive.google.com/open?id=1bayGomljWb6HeYDMTDKXrh0HackKtSlx)
+
 To compute the synonym selection we need the cosine similarity scores between word pairs based on **counter-fitting word embeddings.**
 ## Dataset Preparation
 See [`DATA.md`](DATA.md)
