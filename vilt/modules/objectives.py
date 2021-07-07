@@ -117,7 +117,7 @@ def compute_pgd(pl_module,batch,k_text) :
         labels = labels.type_as(logits)
         loss   = loss_fct(logits.float(), labels.long())
         # calculate x.grad
-        loss.backward(retain_graph=True)
+        loss.backward()
         # Get gradient
         img_delta_grad = img_delta.grad.clone().detach().float()
         # Get inf_norm gradient (It will be used to normalize the img_delta_grad)

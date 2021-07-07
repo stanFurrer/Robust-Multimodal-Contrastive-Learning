@@ -62,6 +62,7 @@ class ViLTransformerSS(pl.LightningModule):
             self.mpp_score.apply(objectives.init_weights)
         
         if config["loss_names"]["moco"] > 0:
+            self.per_step_bs = config["num_gpus"] * config["num_nodes"]
             self.k_text_embeddings = BertEmbeddings(bert_config)
             self._shadow_layer(self.text_embeddings, self.k_text_embeddings)
             self.k_token_type_embeddings = nn.Embedding(2, config["hidden_size"])
