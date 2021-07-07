@@ -1,4 +1,5 @@
-import sys #
+import sys
+import time
 from copy import deepcopy#
 
 import torch
@@ -89,62 +90,26 @@ def optimal_transport_dist(
     distance = trace(cost.matmul(T.detach()))
     return distance
 
-def compute_pgd(pl_module,batch,k_text) :
-    
-    loss_fct = nn.CrossEntropyLoss()
-    # Get the original img
-    img_init = batch['image'][0]
-    # Initialize the delta as zero vectors
-    img_delta = torch.zeros_like(img_init)
-    for astep in range(pl_module.adv_steps_img):
-        # Need to get the gradient for each batch of image features
-        img_delta.requires_grad_(True)
-        try :
-            batch['image'][0] = (img_init + img_delta)#.to(pl_module.device)
-            infer = pl_module.infer(batch, mask_text=False, mask_image=False)
-            image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
-            q_attacked = nn.functional.normalize(image_representation_q, dim=1)
 
-        except:
-            print("problem in step ",astep)
-            sys.exit("STOPP")
-        # RMCL Loss
-        l_pos = torch.einsum('nc,nc->n', [q_attacked, k_text]).unsqueeze(-1)
-        l_neg = torch.einsum('nc,ck->nk', [q_attacked, pl_module.image_queue.clone().detach()])
-        logits = torch.cat([l_pos, l_neg], dim=1)
-        logits /= pl_module.temperature
-        labels = torch.zeros(logits.shape[0], dtype=torch.long)
-        labels = labels.type_as(logits)
-        loss   = loss_fct(logits.float(), labels.long())
-        # calculate x.grad
-        loss.backward()
-        # Get gradient
-        img_delta_grad = img_delta.grad.clone().detach().float()
-        # Get inf_norm gradient (It will be used to normalize the img_delta_grad)
-        denorm = torch.norm(img_delta_grad.view(img_delta_grad.size(0), -1), dim=1, p=float("inf")).view(-1, 1, 1,1)
-        # Clip gradient to Lower Bound
-        denorm = torch.clamp(denorm, min=1e-8)
-        # calculate delta_step  with format img_delta
-        img_delta_step = (pl_module.adv_lr_img * img_delta_grad / denorm).to(img_delta)
-        # Add the calculated step to img_delta (The perturbation)
-        img_delta = (img_delta + img_delta_step).detach()
-        # clip the delta if needed
-        if pl_module.adv_max_norm_img > 0:
-            img_delta = torch.clamp(img_delta, -pl_module.adv_max_norm_img, pl_module.adv_max_norm_img).detach()
+def compute_pgd(pl_module, batch, k_text):
+    img_delta = pl_module.pgd_attacker.pgd_attack(pl_module, deepcopy(batch), k_text)
+    # add debug code here
+    batch["image"][0] = batch["image"][0] + img_delta
     return batch
 
-def compute_geometric(pl_module, batch,k_image) :
-    
+
+def compute_geometric(pl_module, batch, k_image):
+    real_sentence = batch["text"]
     attack_words = \
-    pl_module.greedy_attacker.adv_attack_samples(pl_module,batch,k_image)
+    pl_module.greedy_attacker.adv_attack_samples(pl_module, batch, k_image)
     
     print("This is the Real versus attacked sentences : ")
     
     for i in range(len(batch["text"])):
-        print("Real sentence----: ",batch["text"][i])
-        print("Attacked sentence: ",attack_words["text"][i])
+        print("Real sentence----: ", real_sentence[i])
+        print("Attacked sentence: ", attack_words["text"][i])
     
-    txt_original_attacked   = {"original": batch["text"],
+    txt_original_attacked   = {"original": real_sentence,
                                "attacked": attack_words["text"]
                               }
     batch["text"]          = attack_words["text"]
@@ -195,7 +160,6 @@ def compute_moco_contrastive(pl_module, batch):
     loss = 0
     loss_fct = nn.CrossEntropyLoss()
     ret = {}
-    phase = "train" if pl_module.training else "val"
 
     # momentum update key encoder
     _momentum_update_key_layer(pl_module.momentum, pl_module.text_embeddings, pl_module.k_text_embeddings)
@@ -210,11 +174,13 @@ def compute_moco_contrastive(pl_module, batch):
         k_image = nn.functional.normalize(image_representation_k, dim=1)
 
     if pl_module.image_attack:
-        batch = compute_pgd(pl_module,batch,k_text)
-        infer = pl_module.infer(batch, mask_text=False, mask_image=False)
+        attacked_batch = compute_pgd(pl_module, deepcopy(batch), k_text)
+        infer = pl_module.infer(attacked_batch, mask_text=False, mask_image=False)
         image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
         q = nn.functional.normalize(image_representation_q, dim=1)
-        l_pos = torch.einsum('nc,nc->n', [q, k_text]).unsqueeze(-1)
+
+        # attacked image: close to the same image before attack; away from different images.
+        l_pos = torch.einsum('nc,nc->n', [q, k_image]).unsqueeze(-1)
         l_neg = torch.einsum('nc,ck->nk', [q, pl_module.image_queue.clone().detach()])
         logits = torch.cat([l_pos, l_neg], dim=1)
         logits /= pl_module.temperature
@@ -222,22 +188,33 @@ def compute_moco_contrastive(pl_module, batch):
         labels = torch.zeros(logits.shape[0], dtype=torch.long)
         labels = labels.type_as(logits)
 
-        ret["image_logits"] = logits
-        ret["image_labels"] = labels
-        acc = getattr(pl_module, f"{phase}_moco_img_accuracy")(
-            ret["image_logits"], ret["image_labels"]
-        )
+        ret["image_image_logits"] = logits
+        ret["image_image_labels"] = labels
+
+        loss = loss + loss_fct(logits.float(), labels.long())
+        
+        # attacked image: close to the corresponding text; away from other text
+        l_pos = torch.einsum('nc,nc->n', [q, k_text]).unsqueeze(-1)
+        l_neg = torch.einsum('nc,ck->nk', [q, pl_module.text_queue.clone().detach()])
+        logits = torch.cat([l_pos, l_neg], dim=1)
+        logits /= pl_module.temperature
+
+        labels = torch.zeros(logits.shape[0], dtype=torch.long)
+        labels = labels.type_as(logits)
+
+        ret["image_text_logits"] = logits
+        ret["image_text_labels"] = labels
 
         loss = loss + loss_fct(logits.float(), labels.long())
 
-        _dequeue_and_enqueue(k_image, 'image')
-
     if pl_module.text_attack:
-        batch = compute_geometric(pl_module,batch,k_image)
-        infer = pl_module.infer(batch, mask_text=False, mask_image=False)
+        attacked_batch = compute_geometric(pl_module, deepcopy(batch), k_image)
+        infer = pl_module.infer(attacked_batch, mask_text=False, mask_image=False)
         image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
         q = nn.functional.normalize(text_representation_q, dim=1)
-        l_pos = torch.einsum('nc,nc->n', [q, k_image]).unsqueeze(-1)
+
+        # attacked text: close to the same text; away from different text
+        l_pos = torch.einsum('nc,nc->n', [q, k_text]).unsqueeze(-1)
         l_neg = torch.einsum('nc,ck->nk', [q, pl_module.text_queue.clone().detach()])
         logits = torch.cat([l_pos, l_neg], dim=1)
         logits /= pl_module.temperature
@@ -245,21 +222,29 @@ def compute_moco_contrastive(pl_module, batch):
         labels = torch.zeros(logits.shape[0], dtype=torch.long)
         labels = labels.type_as(logits)
 
-        ret["text_logits"] = logits
-        ret["text_labels"] = labels
-        acc = getattr(pl_module, f"{phase}_moco_txt_accuracy")(
-            ret["text_logits"], ret["text_labels"]
-        )
+        ret["text_text_logits"] = logits
+        ret["text_text_labels"] = labels
 
         loss = loss + loss_fct(logits.float(), labels.long())
 
-        _dequeue_and_enqueue(k_text, 'text')
-        #print("We just arrive after _dequeue_and_enqueue")
-        #sys.exit("Stop And congrat the geometric attack have been a sucess")
-        
-    print("\n\n BATCH DONE \n\n")
+        # attacked text: close to the corresponding image, away from other images
+        l_pos = torch.einsum('nc,nc->n', [q, k_image]).unsqueeze(-1)
+        l_neg = torch.einsum('nc,ck->nk', [q, pl_module.image_queue.clone().detach()])
+        logits = torch.cat([l_pos, l_neg], dim=1)
+        logits /= pl_module.temperature
+
+        labels = torch.zeros(logits.shape[0], dtype=torch.long)
+        labels = labels.type_as(logits)
+
+        ret["text_image_logits"] = logits
+        ret["text_image_labels"] = labels
+
+        loss = loss + loss_fct(logits.float(), labels.long())
+
+    _dequeue_and_enqueue(k_text, 'text')
+    _dequeue_and_enqueue(k_image, 'image')
+
     ret["moco_loss"] = loss
-    loss = getattr(pl_module, f"{phase}_moco_loss")(ret["moco_loss"])
     
     return ret
 

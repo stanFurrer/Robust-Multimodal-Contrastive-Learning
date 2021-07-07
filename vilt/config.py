@@ -121,8 +121,8 @@ def task_moco():
     num_negative = 65536
     momentum = 0.999
     temperature = 0.07
-    text_attack = False
-    image_attack = True
+    text_attack = True
+    image_attack = False
     loss_names = _loss_names({"moco": 1})
     # batch_size = 4096
     batch_size = 16
