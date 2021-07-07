@@ -21,7 +21,7 @@ We provide five pretrained weights
 4. ViLT-B/32 200k finetuned on COCO IR/TR [link](https://github.com/dandelin/ViLT/releases/download/200k/vilt_irtr_coco.ckpt)
 5. ViLT-B/32 200k finetuned on F30K IR/TR [link](https://github.com/dandelin/ViLT/releases/download/200k/vilt_irtr_f30k.ckpt)
 
-## Requirement for the Geometric inspired attack counter-fitting word embeddings
+## Requirement for the Geometric inspired attack
 Download : [counter-fitting word embeddings.](https://drive.google.com/open?id=1bayGomljWb6HeYDMTDKXrh0HackKtSlx)
 
 To compute the synonym selection we need the cosine similarity scores between word pairs based on **counter-fitting word embeddings.**
