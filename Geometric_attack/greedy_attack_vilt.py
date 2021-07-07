@@ -155,6 +155,7 @@ class GreedyAttack:
                 text,
                 batch,
                 device,
+                queue,
                 k_image,
     ):
         embedding_layer    = self.pl_module.get_input_embeddings()  # word_embeddings 
@@ -185,13 +186,13 @@ class GreedyAttack:
             batch["text_masks"] = text_masks
             batch["text"]       = text
             
-            infer = self.pl_module.infer(batch, mask_text=False, mask_image=False)
+            infer = self.pl_module.infer(batch)
             image_representation_q, text_representation_q = self.pl_module.moco_head(infer['image_feats'], infer['text_feats'])
             q_attacked = nn.functional.normalize(text_representation_q, dim=1)
 
             ################ RMCL #################
             l_pos = torch.einsum('nc,nc->n', [q_attacked, k_image]).unsqueeze(-1)
-            l_neg = torch.einsum('nc,ck->nk', [q_attacked, self.pl_module.text_queue.clone().detach()])
+            l_neg = torch.einsum('nc,ck->nk', [q_attacked, queue])
             logits = torch.cat([l_pos, l_neg], dim=1)
             logits /= self.pl_module.temperature
             labels = torch.zeros(logits.shape[0], dtype=torch.long)
@@ -220,6 +221,7 @@ class GreedyAttack:
                                   batch,
                                   batch_size,
                                   device,
+                                  queue,
                                   k_image,
                                  ):
         
@@ -228,6 +230,7 @@ class GreedyAttack:
                                                             text,
                                                             batch,
                                                             device,
+                                                            queue,
                                                             k_image
                                                            )
         
@@ -330,7 +333,8 @@ class GreedyAttack:
                                             
     def adv_attack_samples(self, 
                            pl_module,            
-                           batch,           
+                           batch,
+                           queue,
                            k_image,
                           ) : 
 
@@ -361,6 +365,7 @@ class GreedyAttack:
                                                                  batch        = batch,
                                                                  batch_size   = batch_size,
                                                                  device       = self.device,
+                                                                 queue        = queue,
                                                                  k_image      = k_image,
                                                                         )
             
