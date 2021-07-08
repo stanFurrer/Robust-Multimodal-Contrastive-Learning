@@ -4,10 +4,13 @@ import torch.nn as nn
 
 
 class PGDAttack:
-    def __init__(self, max_image_len):
+    def __init__(self, config):
+        self.adv_steps_img = config["adv_steps_img"]
+        self.adv_lr_img = config["adv_lr_img"]
+        self.adv_max_norm_img = config["adv_max_norm_img"]
         # a mini ViLTransformerSS
         self.pl_module = None
-        self.max_image_len = max_image_len
+        self.max_image_len = config["max_image_len"]
         self.text_embeddings = None
         self.transformer = None
         self.token_type_embeddings = None
@@ -105,27 +108,28 @@ class PGDAttack:
         # Initialize the delta as zero vectors
         img_delta = torch.zeros_like(img_init)
         self.vilt_zero_grad()
-        for astep in range(self.pl_module.adv_steps_img):
+        for astep in range(self.adv_steps_img):
             # Need to get the gradient for each batch of image features
             img_delta.requires_grad_(True)
-            try:
-                batch['image'][0] = (img_init + img_delta)  # .to(pl_module.device)
-                infer = self.infer(batch, mask_text=False, mask_image=False)
-                image_representation_q, text_representation_q = self.moco_head(infer['image_feats'], infer['text_feats'])
-                q_attacked = nn.functional.normalize(image_representation_q, dim=1)
-            except:
-                print("problem in step ", astep)
-                sys.exit("STOPP")
-            # RMCL Loss
-            l_pos = torch.einsum('nc,nc->n', [q_attacked, k_text]).unsqueeze(-1)
-            l_neg = torch.einsum('nc,ck->nk', [q_attacked, self.pl_module.image_queue.clone().detach()])
-            logits = torch.cat([l_pos, l_neg], dim=1)
-            logits /= self.pl_module.temperature
-            labels = torch.zeros(logits.shape[0], dtype=torch.long)
-            labels = labels.type_as(logits)
-            loss = loss_fct(logits.float(), labels.long()) / (1.0 * self.pl_module.adv_steps_img)
-            # calculate x.grad
-            loss.backward()
+            with torch.enable_grad():
+                try:
+                    batch['image'][0] = (img_init + img_delta)  # .to(pl_module.device)
+                    infer = self.infer(batch, mask_text=False, mask_image=False)
+                    image_representation_q, text_representation_q = self.moco_head(infer['image_feats'], infer['text_feats'])
+                    q_attacked = nn.functional.normalize(image_representation_q, dim=1)
+                except:
+                    print("problem in step ", astep)
+                    sys.exit("STOPP")
+                # RMCL Loss
+                l_pos = torch.einsum('nc,nc->n', [q_attacked, k_text]).unsqueeze(-1)
+                l_neg = torch.einsum('nc,ck->nk', [q_attacked, self.pl_module.image_queue.clone().detach()])
+                logits = torch.cat([l_pos, l_neg], dim=1)
+                logits /= self.pl_module.temperature
+                labels = torch.zeros(logits.shape[0], dtype=torch.long)
+                labels = labels.type_as(logits)
+                loss = loss_fct(logits.float(), labels.long()) / (1.0 * self.adv_steps_img)
+                # calculate x.grad
+                loss.backward()
             # Get gradient
             img_delta_grad = img_delta.grad.clone().detach().float()
             # Get inf_norm gradient (It will be used to normalize the img_delta_grad)
@@ -134,10 +138,10 @@ class PGDAttack:
             # Clip gradient to Lower Bound
             denorm = torch.clamp(denorm, min=1e-8)
             # calculate delta_step  with format img_delta
-            img_delta_step = (self.pl_module.adv_lr_img * img_delta_grad / denorm).to(img_delta)
+            img_delta_step = (self.adv_lr_img * img_delta_grad / denorm).to(img_delta)
             # Add the calculated step to img_delta (The perturbation)
             img_delta = (img_delta + img_delta_step).detach()
             # clip the delta if needed
-            if self.pl_module.adv_max_norm_img > 0:
-                img_delta = torch.clamp(img_delta, -self.pl_module.adv_max_norm_img, self.pl_module.adv_max_norm_img).detach()
+            if self.adv_max_norm_img > 0:
+                img_delta = torch.clamp(img_delta, -self.adv_max_norm_img, self.adv_max_norm_img).detach()
         return img_delta

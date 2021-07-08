@@ -122,13 +122,13 @@ def task_moco():
     momentum = 0.999
     temperature = 0.07
     text_attack = True
-    image_attack = False
+    image_attack = True
     loss_names = _loss_names({"moco": 1})
     # batch_size = 4096
-    batch_size = 16
+    batch_size = 4096
     max_epoch = 10
     max_image_len = 200
-    test_only = True
+    test_only = False
     # Attacks parameters
     # PGD
     adv_steps_img = 5

@@ -466,7 +466,8 @@ class GreedyAttack:
             all_new_cap_index       = []
             all_new_img_index       = []
             all_new_image           = []
-            all_new_iid             = []
+            # if self.pl_module.training:
+            #     all_new_iid             = []
             all_new_text_labels     = []
             all_new_text_ids_mlm    = []
             all_new_text_labels_mlm = []
@@ -477,7 +478,8 @@ class GreedyAttack:
                 all_new_image.extend([batch['image'][0][idx]for _ in range(count)])
                 all_new_replica.extend([batch['replica'][idx]for _ in range(count)])
                 all_new_img_index.extend([batch['img_index'][idx]for _ in range(count)])
-                all_new_iid.extend([batch['iid'][idx]for _ in range(count)])
+                # if self.pl_module.training:
+                #     all_new_iid.extend([batch['iid'][idx]for _ in range(count)])
                 all_new_raw_index.extend([batch['raw_index'][idx]for _ in range(count)])
                 all_new_text_labels.extend([batch['text_labels'][idx]for _ in range(count)])
                 all_new_text_ids_mlm.extend([batch['text_ids_mlm'][idx]for _ in range(count)])
@@ -500,7 +502,8 @@ class GreedyAttack:
             batch_c['image']           = all_new_image
             batch_c['replica']         = all_new_replica
             batch_c['img_index']       = all_new_img_index
-            batch_c['iid']             = all_new_iid
+            # if self.pl_module.training:
+            #     batch_c['iid']             = all_new_iid
             batch_c['raw_index']       = all_new_raw_index
             batch_c['text_labels']     = all_new_text_labels
             batch_c['text_ids_mlm']    = all_new_text_ids_mlm
