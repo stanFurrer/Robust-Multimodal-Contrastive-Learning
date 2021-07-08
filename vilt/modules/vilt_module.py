@@ -91,10 +91,7 @@ class ViLTransformerSS(pl.LightningModule):
                 self.greedy_attacker = GreedyAttack(config)
                 print("----Greedy attack Loaded ----")
             if self.image_attack:
-                self.adv_steps_img = config["adv_steps_img"]
-                self.adv_lr_img = config["adv_lr_img"]
-                self.adv_max_norm_img = config["adv_max_norm_img"]
-                self.pgd_attacker = PGDAttack(config["max_image_len"])
+                self.pgd_attacker = PGDAttack(config)
                
         # ===================== Downstream ===================== #
         if (
@@ -409,7 +406,7 @@ class ViLTransformerSS(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         # For adversarial
-        torch.set_grad_enabled(True)
+        # torch.set_grad_enabled(True)
         vilt_utils.set_task(self)
         output = self(batch)
         ret = dict()
