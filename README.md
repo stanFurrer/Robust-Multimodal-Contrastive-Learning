@@ -23,7 +23,8 @@ We provide five pretrained weights
 5. ViLT-B/32 200k finetuned on F30K IR/TR [link](https://github.com/dandelin/ViLT/releases/download/200k/vilt_irtr_f30k.ckpt)
 
 ## Download counter-fitting word embeddings.
-The synonym selection for the Geometric based attack is computed from the cosine similarity scores between word pairs based on the counter-fitting word embeddings [link](https://drive.google.com/open?id=1bayGomljWb6HeYDMTDKXrh0HackKtSlx)
+The synonym selection for the Geometric based attack is computed from the cosine similarity scores between word pairs based on the counter-fitting word embeddings 
+Download and add in "attack" folder: [link](https://drive.google.com/open?id=1bayGomljWb6HeYDMTDKXrh0HackKtSlx)
 
 ## Dataset Preparation (Pretraining/Finetuning)
 See [`DATA.md`](DATA.md)

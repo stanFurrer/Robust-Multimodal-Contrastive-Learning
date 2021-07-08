@@ -83,7 +83,7 @@ def config():
     sim_thred = 0.5
     cos_sim = True
     synonym = "cos_sim"
-    embedding_path = './Geometric_attack/counter-fitted-vectors.txt'
+    embedding_path = './attack/counter-fitted-vectors.txt'
     sim_path = 'cos_sim_counter_fitting.npy'
     
     # PL Trainer Setting
