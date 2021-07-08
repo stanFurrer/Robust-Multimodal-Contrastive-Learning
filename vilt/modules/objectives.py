@@ -100,19 +100,19 @@ def compute_pgd(pl_module, batch, k_text):
 
 
 def compute_geometric(pl_module, batch, k_image):
-    real_sentence = batch["text"]
+    # real_sentence = batch["text"]
     attack_words = \
     pl_module.greedy_attacker.adv_attack_samples(pl_module, batch, k_image)
     
-    print("This is the Real versus attacked sentences : ")
+    # print("This is the Real versus attacked sentences : ")
     
-    for i in range(len(batch["text"])):
-        print("Real sentence----: ", real_sentence[i])
-        print("Attacked sentence: ", attack_words["text"][i])
+    # for i in range(len(batch["text"])):
+    #     print("Real sentence----: ", real_sentence[i])
+    #     print("Attacked sentence: ", attack_words["text"][i])
     
-    txt_original_attacked   = {"original": real_sentence,
-                               "attacked": attack_words["text"]
-                              }
+    # txt_original_attacked   = {"original": real_sentence,
+    #                            "attacked": attack_words["text"]
+    #                           }
     batch["text"]          = attack_words["text"]
     batch["txt_input_ids"] = attack_words["txt_input_ids"]
     batch["text_masks"]    = attack_words["text_masks"]

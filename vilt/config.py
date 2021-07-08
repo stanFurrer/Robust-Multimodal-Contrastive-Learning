@@ -140,8 +140,8 @@ def task_moco():
     sim_thred = 0.5
     cos_sim = True
     synonym = "cos_sim"
-    embedding_path = './Geometric_attack/counter-fitted-vectors.txt'
-    sim_path = 'cos_sim_counter_fitting.npy'
+    embedding_path = './attack/counter-fitted-vectors.txt'
+    sim_path = './attack/cos_sim_counter_fitting.npy'
     
 @ex.named_config
 def task_mlm_itm():
