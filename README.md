@@ -24,7 +24,8 @@ We provide five pretrained weights
 
 ## Download counter-fitting word embeddings.
 The synonym selection for the Geometric based attack is computed from the cosine similarity scores between word pairs based on the counter-fitting word embeddings 
-Download and add in "attack" folder: [link](https://drive.google.com/open?id=1bayGomljWb6HeYDMTDKXrh0HackKtSlx)
+
+Download and add in **attack folder**: [link](https://drive.google.com/open?id=1bayGomljWb6HeYDMTDKXrh0HackKtSlx)
 
 ## Dataset Preparation (Pretraining/Finetuning)
 See [`DATA.md`](DATA.md)
