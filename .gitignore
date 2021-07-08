@@ -13,6 +13,8 @@ scripts/
 demos/
 cos_sim_counter_fitting.npy
 requirements.txt.save/
+MoCo
+Geometric_attack
 Geometric_attack/Old_code_in_case.ipynb
 Geometric_attack/counter-fitted-vectors.txt
 Geometric_attack/deepfool.py
