@@ -3,7 +3,8 @@ import copy
 import pytorch_lightning as pl
 
 from vilt.config import ex
-from vilt.modules import ViLTransformerSS
+from vilt.modules.vilt_module import ViLTransformerSS
+#from vilt.modules.vilt_module_correct import ViLTransformerSS
 from vilt.datamodules.multitask_datamodule import MTDataModule
 
 
@@ -11,8 +12,8 @@ from vilt.datamodules.multitask_datamodule import MTDataModule
 def main(_config):
     _config = copy.deepcopy(_config)
 
-    #os.environ['MASTER_ADDR'] = 'localhost'
-    #os.environ['MASTER_PORT'] = '12355'
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
     
     pl.seed_everything(_config["seed"])
 

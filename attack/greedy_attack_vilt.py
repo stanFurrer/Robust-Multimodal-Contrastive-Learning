@@ -70,7 +70,6 @@ class GreedyAttack:
         self.text_embeddings = None
         self.transformer = None
         self.token_type_embeddings = None
-        # self.pooler = None
         self.moco_head = None
 
     def init_matrix(self, embedding_path, sim_path): 
@@ -131,7 +130,7 @@ class GreedyAttack:
         text_embeds = self.text_embeddings(text_ids)
     
         if image_embeds is None and image_masks is None:
-            img = batch["image"][0]  # [0] : Because it's a list of one element
+            img = batch["image"][0]
             (
                 image_embeds,
                 image_masks,
@@ -147,8 +146,6 @@ class GreedyAttack:
                 None,
                 None,
             )
-        # image_embeds.shape : [64 217 768] :: [batch,patch,hiddensize]
-        # patch_index shape  : ([64 217 2]), (19,19)) (patch_index, (H,W))
     
         text_embeds, image_embeds = (
             text_embeds + self.token_type_embeddings(torch.zeros_like(text_masks)),
@@ -171,19 +168,10 @@ class GreedyAttack:
             x[:, : text_embeds.shape[1]],
             x[:, text_embeds.shape[1]:],
         )
-        # cls_feats = self.pooler(x)
     
         ret = {
             "text_feats": text_feats,
             "image_feats": image_feats,
-            # "cls_feats": cls_feats,
-            # "raw_cls_feats": x[:, 0],
-            # "image_labels": image_labels,
-            # "image_masks": image_masks,
-            # "text_labels": text_labels,
-            # "text_ids": text_ids,
-            # "text_masks": text_masks,
-            # "patch_index": patch_index,
         }
     
         return ret
@@ -267,7 +255,7 @@ class GreedyAttack:
         emb_hook = embedding_layer.register_full_backward_hook(emb_grad_hook)
         pro_hook = projector_layer.register_full_backward_hook(pro_grad_hook)
 
-        self.vilt_zero_grad() # TO-DO problem for accumulated gradient
+        self.vilt_zero_grad()
         
         with torch.enable_grad(): 
             batch["text_ids"]   = input_ids
@@ -412,7 +400,7 @@ class GreedyAttack:
                 position += length
 
     def split_forward(self,batch):
-        """Do a Forward pass to get the Joint Representation"""
+        """Do a Forward pass to get the text Representation"""
         with torch.no_grad():
             infer = self.infer(batch, mask_text=False, mask_image=False)
             image_representation_q, text_representation_q = self.moco_head(infer['image_feats'], infer['text_feats'])
@@ -466,8 +454,7 @@ class GreedyAttack:
             all_new_cap_index       = []
             all_new_img_index       = []
             all_new_image           = []
-            # if self.pl_module.training:
-            #     all_new_iid             = []
+            all_new_iid             = []
             all_new_text_labels     = []
             all_new_text_ids_mlm    = []
             all_new_text_labels_mlm = []
@@ -478,8 +465,7 @@ class GreedyAttack:
                 all_new_image.extend([batch['image'][0][idx]for _ in range(count)])
                 all_new_replica.extend([batch['replica'][idx]for _ in range(count)])
                 all_new_img_index.extend([batch['img_index'][idx]for _ in range(count)])
-                # if self.pl_module.training:
-                #     all_new_iid.extend([batch['iid'][idx]for _ in range(count)])
+                all_new_iid.extend([batch['iid'][idx]for _ in range(count)])
                 all_new_raw_index.extend([batch['raw_index'][idx]for _ in range(count)])
                 all_new_text_labels.extend([batch['text_labels'][idx]for _ in range(count)])
                 all_new_text_ids_mlm.extend([batch['text_ids_mlm'][idx]for _ in range(count)])
@@ -502,8 +488,7 @@ class GreedyAttack:
             batch_c['image']           = all_new_image
             batch_c['replica']         = all_new_replica
             batch_c['img_index']       = all_new_img_index
-            # if self.pl_module.training:
-            #     batch_c['iid']             = all_new_iid
+            batch_c['iid']             = all_new_iid
             batch_c['raw_index']       = all_new_raw_index
             batch_c['text_labels']     = all_new_text_labels
             batch_c['text_ids_mlm']    = all_new_text_ids_mlm

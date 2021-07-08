@@ -84,7 +84,7 @@ def config():
     sim_thred = 0.5
     cos_sim = True
     synonym = "cos_sim"
-    embedding_path = './Geometric_attack/counter-fitted-vectors.txt'
+    embedding_path = './attack/counter-fitted-vectors.txt'
     sim_path = 'cos_sim_counter_fitting.npy'
     
     # PL Trainer Setting
@@ -128,7 +128,7 @@ def task_moco():
     batch_size = 4096
     max_epoch = 10
     max_image_len = 200
-    test_only = False
+    test_only = True
     # Attacks parameters
     # PGD
     adv_steps_img = 5
@@ -215,7 +215,7 @@ def task_finetune_nlvr2_randaug_attacked():
     learning_rate = 1e-4
     # Attacks parameters
     text_attack = True
-    image_attack = True
+    image_attack = False
     # PGD
     adv_steps_img = 5
     adv_lr_img = 0.5
