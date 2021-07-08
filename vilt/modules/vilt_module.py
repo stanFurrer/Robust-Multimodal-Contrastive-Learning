@@ -1,10 +1,13 @@
 #### New
+from attack.greedy_attack_vilt import GreedyAttack
+from attack.pgd_attack_vilt import PGDAttack
+
 import os #
 import time#
 from copy import deepcopy
 from collections import OrderedDict #
 from transformers import BertTokenizer#
-from Geometric_attack.greedy_attack_vilt import GreedyAttack #
+#from Geometric_attack.greedy_attack_vilt import GreedyAttack #
 from Geometric_attack.greedy_attack_vilt_cross_entropy import GreedyAttack_cross_entropy #
 ####
 
@@ -62,6 +65,7 @@ class ViLTransformerSS(pl.LightningModule):
             self.mpp_score.apply(objectives.init_weights)
 
         if config["loss_names"]["moco"] > 0:
+            self.per_step_bs = config["num_gpus"] * config["num_nodes"]
             self.k_text_embeddings = BertEmbeddings(bert_config)
             self._shadow_layer(self.text_embeddings, self.k_text_embeddings)
             self.k_token_type_embeddings = nn.Embedding(2, config["hidden_size"])
@@ -79,33 +83,23 @@ class ViLTransformerSS(pl.LightningModule):
             self.text_attack = config["text_attack"]
             self.image_attack = config["image_attack"]
             self.num_negative = config["num_negative"]
-            #param attacks
-            self.n_candidates = config["n_candidates"]
-            self.max_loops = config["max_loops"]     
-            self.sim_thred = config["sim_thred"]      
-            self.cos_sim = config["cos_sim"]     
-            self.synonym = config["synonym"]    
-            self.embedding_path = config["embedding_path"] 
-            self.sim_path = config["sim_path"]    
-            self.adv_steps_img = config["adv_steps_img"]  
-            self.adv_lr_img = config["adv_lr_img"]     
-            self.adv_max_norm_img = config["adv_max_norm_img"] 
+            
+            self.register_buffer("text_queue", torch.randn(128, self.num_negative))
+            self.text_queue = nn.functional.normalize(self.text_queue, dim=0)
+            self.register_buffer("text_queue_ptr", torch.zeros(1, dtype=torch.long))
+            self.register_buffer("image_queue", torch.randn(128, self.num_negative))
+            self.image_queue = nn.functional.normalize(self.image_queue, dim=0)
+            self.register_buffer("image_queue_ptr", torch.zeros(1, dtype=torch.long))
             
             if self.text_attack:
-                self.register_buffer("text_queue", torch.randn(128, self.num_negative))
-                self.text_queue = nn.functional.normalize(self.text_queue, dim=0)
-                self.register_buffer("text_queue_ptr", torch.zeros(1, dtype=torch.long))
-                self.tokenizer = BertTokenizer.from_pretrained(config["tokenizer"])
                 print("----Loading greedy attack ----")
-                self.greedy_attacker = GreedyAttack(args = config,
-                                            n_candidates = config["n_candidates"],
-                                            max_loops    = config["max_loops"],    
-                                            tokenizer    = self.tokenizer)
+                self.greedy_attacker = GreedyAttack(config)
                 print("----Greedy attack Loaded ----")
             if self.image_attack:
-                self.register_buffer("image_queue", torch.randn(128, self.num_negative))
-                self.image_queue = nn.functional.normalize(self.image_queue, dim=0)
-                self.register_buffer("image_queue_ptr", torch.zeros(1, dtype=torch.long))            
+                self.adv_steps_img = config["adv_steps_img"]
+                self.adv_lr_img = config["adv_lr_img"]
+                self.adv_max_norm_img = config["adv_max_norm_img"]
+                self.pgd_attacker = PGDAttack(config["max_image_len"])            
                
         # ===================== Downstream ===================== #
         if (
@@ -209,8 +203,6 @@ class ViLTransformerSS(pl.LightningModule):
     def infer(
         self,
         batch,
-        img_delta=None,
-        attack_words=None,
         mask_text=False,
         mask_image=False,
         image_token_type_idx=1,
@@ -224,20 +216,13 @@ class ViLTransformerSS(pl.LightningModule):
             imgkey = "image"
 
         do_mlm = "_mlm" if mask_text else ""
-        if attack_words is None : 
-            text_ids = batch[f"text_ids{do_mlm}"]
-            text_masks = batch[f"text_masks"]
-        else :
-            text_ids = attack_words["txt_input_ids"]
-            text_masks = attack_words["text_masks"]     
+        text_ids = batch[f"text_ids{do_mlm}"]
+        text_masks = batch[f"text_masks"]   
         text_labels = batch[f"text_labels{do_mlm}"]
         text_embeds = self.text_embeddings(text_ids)
 
         if image_embeds is None and image_masks is None:
-            if img_delta is None: 
-                img = batch[imgkey][0] # [0] : list of one element
-            else :
-                img = batch[imgkey][0] + img_delta
+            img = batch[imgkey][0] # [0] : list of one element
             (
                 image_embeds,
                 image_masks,
@@ -407,11 +392,7 @@ class ViLTransformerSS(pl.LightningModule):
 
         # MoCo Contrasive framework
         if "moco" in self.current_tasks:
-            # Creat a deepcopy of ViLT for the attacks
-            shadow = ViLtransformerss_deepcopy(self)
-            #print("\n The class shadow have been loaded \n")
-            ret.update(objectives.compute_moco_contrastive(self,shadow ,batch))    
-            #ret.update(objectives.compute_moco_contrastive(self,batch)) 
+            ret.update(objectives.compute_moco_contrastive(self,batch))    
                 
         return ret
 
@@ -453,95 +434,3 @@ class ViLTransformerSS(pl.LightningModule):
 
     def configure_optimizers(self):
         return vilt_utils.set_schedule(self)    
-    
-    def backward(self, use_amp, loss, optimizer):
-        # Doesn't work.....
-        # do a custom way of backward
-        loss.backward(retain_graph=True)
-
-class ViLtransformerss_deepcopy(pl.LightningModule) :
-
-    def __init__(self, pl_module) :
-        super().__init__()
-        self.text_embeddings = deepcopy(pl_module.text_embeddings)
-        self.token_type_embeddings= deepcopy(pl_module.token_type_embeddings)
-        self.transformer = deepcopy(pl_module.transformer)
-        self.moco_head = deepcopy(pl_module.moco_head)
-        self.max_image_len = pl_module.hparams.config["max_image_len"]
-        self.pooler = deepcopy(pl_module.pooler)
-        self.config = pl_module.config
-        #param Moco
-        self.momentum = pl_module.momentum
-        self.temperature = pl_module.temperature
-        self.text_attack = pl_module.text_attack
-        self.image_attack = pl_module.image_attack
-        self.num_negative = pl_module.num_negative
-        #param attacks
-        self.n_candidates = pl_module.n_candidates
-        self.max_loops = pl_module.max_loops    
-        self.sim_thred = pl_module.sim_thred   
-        self.cos_sim = pl_module.cos_sim    
-        self.synonym = pl_module.synonym   
-        self.embedding_path = pl_module.embedding_path
-        self.sim_path = pl_module.sim_path  
-        self.adv_steps_img = pl_module.adv_steps_img
-        self.adv_lr_img = pl_module.adv_lr_img    
-        self.adv_max_norm_img = pl_module.adv_max_norm_img
-        
-    def infer(
-        self,
-        batch,
-        img_delta=None,
-        attack_words=None,
-        ):
-        image_token_type_idx = 1
-        if attack_words is None : 
-            text_ids = batch[f"text_ids"]
-            text_masks = batch[f"text_masks"]
-        else :
-            text_ids = attack_words["txt_input_ids"]
-            text_masks = attack_words["text_masks"]     
-        text_embeds = self.text_embeddings(text_ids)
-
-        if img_delta is None: 
-            img = batch["image"][0] # [0] : list of one element
-        else :
-            img = batch["image"][0] + img_delta
-        (
-            image_embeds,
-            image_masks,
-            patch_index,
-            image_labels,
-        ) = self.transformer.visual_embed(
-            img,
-            max_image_len=self.config["max_image_len"],
-            mask_it=False,
-        )
-
-        text_embeds, image_embeds = (
-            text_embeds + self.token_type_embeddings(torch.zeros_like(text_masks)),
-            image_embeds
-            + self.token_type_embeddings(
-                torch.full_like(image_masks, image_token_type_idx)
-            ),
-        )
-
-        co_embeds = torch.cat([text_embeds, image_embeds], dim=1)
-        co_masks = torch.cat([text_masks, image_masks], dim=1)
-
-        x = co_embeds
-
-        for i, blk in enumerate(self.transformer.blocks):
-            x, _attn = blk(x, mask=co_masks)
-
-        x = self.transformer.norm(x)
-        text_feats, image_feats = (
-            x[:, : text_embeds.shape[1]],
-            x[:, text_embeds.shape[1] :],
-        )
-
-        ret = {
-            "text_feats": text_feats,
-            "image_feats": image_feats,
-              }
-        return ret

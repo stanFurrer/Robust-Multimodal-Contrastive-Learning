@@ -17,7 +17,6 @@ def _loss_names(d):
     ret.update(d)
     return ret
 
-
 @ex.config
 def config():
     exp_name = "vilt"
@@ -121,8 +120,8 @@ def task_moco():
     num_negative = 65536
     momentum = 0.999
     temperature = 0.07
-    text_attack = False
-    image_attack = True
+    text_attack = True
+    image_attack = False
     loss_names = _loss_names({"moco": 1})
     # batch_size = 4096
     batch_size = 16
@@ -186,8 +185,7 @@ def task_finetune_nlvr2():
     warmup_steps = 0.1
     draw_false_image = 0
     learning_rate = 1e-4
-    
-    
+       
 @ex.named_config
 def task_finetune_nlvr2_randaug():
     exp_name = "finetune_nlvr2_randaug"
