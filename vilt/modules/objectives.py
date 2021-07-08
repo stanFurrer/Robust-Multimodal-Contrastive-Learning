@@ -1,7 +1,8 @@
 import sys
 import time
-from copy import deepcopy#
+from copy import deepcopy, copy#
 
+import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -117,6 +118,7 @@ def compute_geometric(pl_module, batch, k_image):
     batch["text_masks"]    = attack_words["text_masks"]
 
     return batch #, txt_original_attacked
+
 
 def compute_moco_contrastive(pl_module, batch):
     
@@ -499,44 +501,45 @@ def compute_vqa(pl_module, batch):
 
 
 def compute_pgd_finetuning(pl_module,batch) :
-    # Attack on each image
     for i in range(2) :
-        # Get the original img
         img_init = batch['image_{}'.format(i)][0]
-        # Initialize the delta as zero vectors
         img_delta = torch.zeros_like(img_init)
-        for astep in range(pl_module.adv_steps_img):
-            img_delta.requires_grad_(True)
-            # Get all answer of model with adv_delta added to img_feat
-            batch['image_{}'.format(i)][0] = (img_init + img_delta)
-            infer1 = pl_module.infer(
-                batch, mask_text=False, mask_image=False, image_token_type_idx=1)
-            infer2 = pl_module.infer(
-                batch, mask_text=False, mask_image=False, image_token_type_idx=2)
-            # NlVR2 output
+        for astep in range(pl_module.adv_steps_img):                
+            img_delta.requires_grad_(True)                
+            if i == 0 :
+                img_delta1 = img_delta
+                infer1 = pl_module.infer(
+                    batch, img_delta = img_delta1,
+                    mask_text=False, mask_image=False, image_token_type_idx=1)
+                infer2 = pl_module.infer(
+                    batch, mask_text=False, mask_image=False, image_token_type_idx=2)
+            else :
+                img_delta2 = img_delta
+                infer1 = pl_module.infer(
+                    batch, mask_text=False, mask_image=False, image_token_type_idx=1)
+                infer2 = pl_module.infer(
+                    batch, img_delta = img_delta2,
+                    mask_text=False, mask_image=False, image_token_type_idx=2)
+            
             cls_feats = torch.cat([infer1["cls_feats"], infer2["cls_feats"]], dim=-1)
             nlvr2_logits = pl_module.nlvr2_classifier(cls_feats)
-            # Creat loss : reduction "none" because then we do the mean and devide by adv_steps_img
+
             nlvr2_labels = torch.tensor(batch["answers"]).to(pl_module.device).long()
             loss = F.cross_entropy(nlvr2_logits, nlvr2_labels, reduction='none')
-            loss = loss.mean() #/ adv_steps_img
-            # calculate x.grad
+            loss = loss.mean()
             loss.backward(retain_graph=True)
-            # Get gradient
             img_delta_grad = img_delta.grad.clone().detach().float()
             # Get inf_norm gradient (It will be used to normalize the img_delta_grad)
             denorm = torch.norm(img_delta_grad.view(img_delta_grad.size(0), -1), dim=1, p=float("inf")).view(-1, 1, 1,1)
 
             # Clip gradient to Lower Bound
             denorm = torch.clamp(denorm, min=1e-8)
-            # calculate delta_step  with format img_delta
             img_delta_step = (pl_module.adv_lr_img * img_delta_grad / denorm).to(img_delta)
-            # Add the calculated step to img_delta (The perturbation)
             img_delta = (img_delta + img_delta_step).detach()
-            # clip the delta if needed
             if pl_module.adv_max_norm_img > 0:
-                img_delta = torch.clamp(img_delta, -pl_module.adv_max_norm_img, pl_module.adv_max_norm_img).detach()
-    return batch
+                img_delta = torch.clamp(img_delta, -pl_module.adv_max_norm_img,
+                                        pl_module.adv_max_norm_img).detach()
+    return img_delta1, img_delta2
 
 def compute_geometric_finetuning(pl_module, batch) :
     
@@ -550,39 +553,83 @@ def compute_geometric_finetuning(pl_module, batch) :
         print("Real sentence----: ",real_sentence[i])
         print("Attacked sentence: ",attack_words["text"][i])
     
-    txt_original_attacked   = {"original": batch["text"],
+    txt_original_attacked   = {"original": real_sentence["text"],
                                "attacked": attack_words["text"]
                               }
-    batch["text"]          = attack_words["text"]
-    batch["txt_input_ids"] = attack_words["txt_input_ids"]
-    batch["text_masks"]    = attack_words["text_masks"]
-
-    return batch #, txt_original_attacked
+    # Compute replace_rate
+    #n_changed = []
+    #lenght    = []
+    #for i in batch["text"].size(0) :
+    #    length.append(len(txt_original_attacked["original"][i]))
+    #    for j in len(txt_original_attacked["original"][i]):
+    #        n_word_changed = 0
+    #        if txt_original_attacked["original"][i][j].lower() != txt_original_attacked["attacked"][i][j].lower() :
+    #            n_word_changed +=1
+    #    n_changed.append(n_word_changed)
+    
+    #replace_rate = n_changed/lenght
+    #print("This is the replace_rate",replace_rate)
+    #sys.exit("STOP STOP")
+    return attack_words
 
 def compute_nlvr2_attack(pl_module, batch):
+    img_delta1 = None
+    img_delta2 = None
+    nlvr2_labels = batch["answers"]
+    nlvr2_labels = torch.tensor(nlvr2_labels).to(pl_module.device).long()
     
-    if pl_module.image_attack :
-        batch = compute_pgd_finetuning(pl_module,batch)
-    if pl_module.text_attack :
-        batch =  compute_geometric_finetuning(pl_module, batch)
-
     infer1 = pl_module.infer(
-        batch, mask_text=False, mask_image=False, image_token_type_idx=1
+        batch,mask_text=False, mask_image=False, image_token_type_idx=1
     )
     infer2 = pl_module.infer(
-        batch, mask_text=False, mask_image=False, image_token_type_idx=2
+        batch,mask_text=False, mask_image=False, image_token_type_idx=2
     )
     # NlVR2 output
     cls_feats = torch.cat([infer1["cls_feats"], infer2["cls_feats"]], dim=-1)
     nlvr2_logits = pl_module.nlvr2_classifier(cls_feats)
     # Compute the cross-entropy
-    nlvr2_labels = batch["answers"]
-    nlvr2_labels = torch.tensor(nlvr2_labels).to(pl_module.device).long()
     nlvr2_loss   = F.cross_entropy(nlvr2_logits, nlvr2_labels)
-
+    
+    if pl_module.image_attack :
+        img_delta1, img_delta2 = compute_pgd_finetuning(pl_module,batch)
+        
+        infer1_a = pl_module.infer(
+            batch,img_delta = img_delta1 ,
+            mask_text=False, mask_image=False,
+            image_token_type_idx=1
+        )
+        infer2_a = pl_module.infer(
+            batch,img_delta = img_delta2,
+            mask_text=False, mask_image=False,
+            image_token_type_idx=2
+        )
+        cls_feats = torch.cat([infer1_a["cls_feats"], infer2_a["cls_feats"]], dim=-1)
+        nlvr2_logits_a = pl_module.nlvr2_classifier(cls_feats)
+        nlvr2_loss_a = F.cross_entropy(nlvr2_logits_a, nlvr2_labels)
+    
+    if pl_module.text_attack :
+        attack_words =  compute_geometric_finetuning(pl_module, batch)
+        
+        infer1_a = pl_module.infer(
+            batch,img_delta = img_delta1,
+            attack_words = attack_words,
+            mask_text=False, mask_image=False,
+            image_token_type_idx=1
+        )
+        infer2_a = pl_module.infer(
+            batch,img_delta = img_delta2,
+            attack_words = attack_words,
+            mask_text=False, mask_image=False,
+            image_token_type_idx=2
+        )
+        cls_feats = torch.cat([infer1_a["cls_feats"], infer2_a["cls_feats"]], dim=-1)
+        nlvr2_logits_a = pl_module.nlvr2_classifier(cls_feats)
+        nlvr2_loss_a = F.cross_entropy(nlvr2_logits_a, nlvr2_labels)
+    
     ret = {
-        "nlvr2_attacked_loss": nlvr2_loss,
-        "nlvr2_attacked_logits": nlvr2_logits,
+        "nlvr2_attacked_loss": nlvr2_loss_a,
+        "nlvr2_attacked_logits": nlvr2_logits_a,
+        "nlvr2_logits": nlvr2_logits,
         "nlvr2_attacked_labels": nlvr2_labels,
     }
 
@@ -619,8 +666,18 @@ def compute_nlvr2_attack(pl_module, batch):
             test_acc = getattr(pl_module, f"test_nlvr2_attacked_accuracy")(
                 ret["nlvr2_attacked_logits"][test_batches], ret["nlvr2_attacked_labels"][test_batches]
             )
+            
+            change_rate = getattr(pl_module, f"test_nlvr2_attacked_change_rate")(
+                ret["nlvr2_attacked_logits"][test_batches], ret["nlvr2_logits"][test_batches]
+            )
+            
             pl_module.log(f"nlvr2_attacked/test/loss", test_loss)
             pl_module.log(f"nlvr2_attacked/test/accuracy", test_acc)
+            pl_module.log(f"nlvr2_attacked/test/change_rate", change_rate)
+            
+            ## Save img_delta
+            
+            ## Save attacked_sentence
 
     return ret
 

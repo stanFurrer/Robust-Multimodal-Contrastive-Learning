@@ -8,8 +8,7 @@ from transformers import (
 )
 from vilt.modules.dist_utils import all_gather
 from vilt.modules.objectives import compute_irtr_recall
-from vilt.gadgets.my_metrics import Accuracy, VQAScore, Scalar
-
+from vilt.gadgets.my_metrics import Accuracy, VQAScore, Scalar,change_rate
 
 def set_metrics(pl_module):
     for split in ["train", "val"]:
@@ -38,6 +37,7 @@ def set_metrics(pl_module):
                     setattr(pl_module, f"dev_{k}_loss", Scalar())
                     setattr(pl_module, f"test_{k}_accuracy", Accuracy())
                     setattr(pl_module, f"test_{k}_loss", Scalar())
+                    setattr(pl_module, f"test_{k}_change_rate", change_rate())
             
             elif k == "irtr":
                 setattr(pl_module, f"{split}_irtr_loss", Scalar())
@@ -130,7 +130,6 @@ def epoch_wrapup(pl_module):
                 getattr(pl_module, f"test_{loss_name}_loss").reset()
         
         elif loss_name == "nlvr2_attacked":
-            print("ENTERING SOMEWHERE IMPORTANT\n\n")
             if phase == "train":
                 value = getattr(pl_module, f"train_{loss_name}_accuracy").compute()
                 pl_module.log(f"{loss_name}/train/accuracy_epoch", value)
@@ -153,6 +152,11 @@ def epoch_wrapup(pl_module):
                 value = getattr(pl_module, f"test_{loss_name}_accuracy").compute()
                 pl_module.log(f"{loss_name}/test/accuracy_epoch", value)
                 getattr(pl_module, f"test_{loss_name}_accuracy").reset()
+                
+                value_change = getattr(pl_module, f"test_{loss_name}_change_rate").compute()
+                pl_module.log(f"{loss_name}/test/change_rate_epoch", value_change)
+                getattr(pl_module, f"test_{loss_name}_change_rate").reset()
+                
                 pl_module.log(
                     f"{loss_name}/test/loss_epoch",
                     getattr(pl_module, f"test_{loss_name}_loss").compute(),

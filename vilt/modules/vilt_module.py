@@ -1,10 +1,15 @@
-import os
-from collections import OrderedDict
-from transformers import BertTokenizer
+#### New
 from attack.greedy_attack_vilt import GreedyAttack
 from attack.pgd_attack_vilt import PGDAttack
-# from Geometric_attack.greedy_attack_vilt import GreedyAttack
-from Geometric_attack.greedy_attack_vilt_cross_entropy import GreedyAttack_cross_entropy
+
+import os #
+import time#
+from copy import deepcopy
+from collections import OrderedDict #
+from transformers import BertTokenizer#
+#from Geometric_attack.greedy_attack_vilt import GreedyAttack #
+from Geometric_attack.greedy_attack_vilt_cross_entropy import GreedyAttack_cross_entropy #
+####
 
 import torch
 import torch.nn as nn
@@ -19,7 +24,7 @@ class ViLTransformerSS(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
         self.save_hyperparameters()
-
+        self.config = config
         bert_config = BertConfig(
             vocab_size=config["vocab_size"],
             hidden_size=config["hidden_size"],
@@ -154,7 +159,7 @@ class ViLTransformerSS(pl.LightningModule):
                 self.synonym = config["synonym"]
                 self.embedding_path = config["embedding_path"]
                 self.sim_path = config["sim_path"]
-                self.tokenizer       = BertTokenizer.from_pretrained('bert-base-uncased')
+                self.tokenizer= BertTokenizer.from_pretrained('bert-base-uncased')
                 print("----Loading GreedyAttack_cross_entropy ----")
                 self.greedy_attacker = GreedyAttack_cross_entropy(args = config,
                                             n_candidates = self.n_candidates,

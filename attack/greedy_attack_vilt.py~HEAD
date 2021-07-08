@@ -1,19 +1,18 @@
-import torch
-from copy import deepcopy
 import sys
 import nltk
-from nltk.corpus import stopwords
-from torch.nn import functional as F
-# Need to do this one time nltk.download('stopwords')
-from torch.nn import CosineSimilarity
-import string
-import numpy as np
 import os
-import torch.nn.functional as F
-import torch.nn as nn
+import string
+from copy import deepcopy
+import numpy as np
+from nltk.corpus import stopwords
 from nltk.corpus import wordnet
-
+import torch
+import torch.nn as nn
+from torch.nn import functional as F
+from torch.nn import CosineSimilarity
 from torch.nn.utils.rnn import pad_sequence
+from transformers import BertTokenizer
+
 # Uncomment if first type using script
 #nltk.download('wordnet')
 
@@ -45,28 +44,34 @@ filter_words = ['a', 'about', 'above', 'across', 'after', 'afterwards', 'again',
 filter_words = set(filter_words)
 
 
-class GreedyAttack_cross_entropy:
-    def __init__(self, args,n_candidates,max_loops, tokenizer):
-        self.args              = args
+class GreedyAttack:
+    def __init__(self, config):
+        self.pl_module = None
         self.stopwords         = set(stopwords.words('english'))
-        self.model             = None
         self.cosine_similarity = CosineSimilarity(dim=1, eps=1e-6)
-        self.tokenizer         = tokenizer        
+        self.tokenizer         = BertTokenizer.from_pretrained(config["tokenizer"])
         self.device            = None
         self.words_to_sub_words= None
-        self.max_length        = args["max_text_len"]     
-        self.n_candidates      = n_candidates  
-        self.max_loops         = max_loops       
-        self.sim_thred         = args["sim_thred"]        
+        self.max_length        = config["max_text_len"]
+        self.n_candidates      = config["n_candidates"]
+        self.max_loops         = config["max_loops"]
+        self.sim_thred         = config["sim_thred"]
         self.word2id           = self.tokenizer.get_vocab()              
         self.id2word           = {v: k for k, v in self.word2id.items()}         
         self.cos_sim           = None                                    
         self.sim_word2id       = None 
         self.sim_id2word       = None
-        self.synonym           = args["synonym"]
+        self.synonym           = config["synonym"]
         self.cos_sim_dict      = None
-        if self.args["cos_sim"]:                                              
-            self.init_matrix(self.args["embedding_path"], self.args["sim_path"]) 
+        if config["cos_sim"]:
+            self.init_matrix(config["embedding_path"], config["sim_path"])
+        # a mini ViLTransformerSS
+        self.max_image_len = config["max_image_len"]
+        self.text_embeddings = None
+        self.transformer = None
+        self.token_type_embeddings = None
+        # self.pooler = None
+        self.moco_head = None
 
     def init_matrix(self, embedding_path, sim_path): 
         """Creat cos_sim_dict"""
@@ -81,10 +86,8 @@ class GreedyAttack_cross_entropy:
                 if word not in self.sim_id2word:
                     self.sim_id2word[len(self.sim_id2word)] = word
                     self.sim_word2id[word] = len(self.sim_id2word) - 1
-        # Load cos_sim if exit
         if os.path.exists(sim_path):
             self.cos_sim = np.load(sim_path,allow_pickle=True)
-        # compute cos_sim if do not exit
         else:
             embeddings = np.array(embeddings)
             norm = np.linalg.norm(embeddings, axis=1, keepdims=True)
@@ -95,7 +98,6 @@ class GreedyAttack_cross_entropy:
             self.cos_sim_dict = {}
             for idx, word in self.sim_id2word.items():
                 candidates = set()
-                ### self.cos_sim is a matrix of 6e9 x 6e9
                 indices = torch.topk(torch.tensor(self.cos_sim[idx]), k=self.n_candidates).indices
                 for i in indices:
                     i = int(i)
@@ -107,7 +109,91 @@ class GreedyAttack_cross_entropy:
                 if len(candidates) == 0:
                     candidates = [word]
                 self.cos_sim_dict[idx] = candidates
-                
+
+    def build_mini_vilt(self, pl_module):
+        self.pl_module = pl_module
+        self.text_embeddings = deepcopy(pl_module.text_embeddings)
+        self.token_type_embeddings = deepcopy(pl_module.token_type_embeddings)
+        self.transformer = deepcopy(pl_module.transformer)
+        self.moco_head = deepcopy(pl_module.moco_head)
+        
+    def infer(
+            self,
+            batch,
+            mask_text=False,
+            mask_image=False,
+            image_token_type_idx=1,
+            image_embeds=None,
+            image_masks=None,
+    ):
+        text_ids = batch[f"text_ids"]
+        text_masks = batch[f"text_masks"]
+        text_embeds = self.text_embeddings(text_ids)
+    
+        if image_embeds is None and image_masks is None:
+            img = batch["image"][0]  # [0] : Because it's a list of one element
+            (
+                image_embeds,
+                image_masks,
+                patch_index,
+                image_labels,
+            ) = self.transformer.visual_embed(
+                img,
+                max_image_len=self.max_image_len,
+                mask_it=mask_image,
+            )
+        else:
+            patch_index, image_labels = (
+                None,
+                None,
+            )
+        # image_embeds.shape : [64 217 768] :: [batch,patch,hiddensize]
+        # patch_index shape  : ([64 217 2]), (19,19)) (patch_index, (H,W))
+    
+        text_embeds, image_embeds = (
+            text_embeds + self.token_type_embeddings(torch.zeros_like(text_masks)),
+            image_embeds
+            + self.token_type_embeddings(
+                torch.full_like(image_masks, image_token_type_idx)
+            ),
+        )
+    
+        co_embeds = torch.cat([text_embeds, image_embeds], dim=1)
+        co_masks = torch.cat([text_masks, image_masks], dim=1)
+    
+        x = co_embeds
+    
+        for i, blk in enumerate(self.transformer.blocks):
+            x, _attn = blk(x, mask=co_masks)
+    
+        x = self.transformer.norm(x)
+        text_feats, image_feats = (
+            x[:, : text_embeds.shape[1]],
+            x[:, text_embeds.shape[1]:],
+        )
+        # cls_feats = self.pooler(x)
+    
+        ret = {
+            "text_feats": text_feats,
+            "image_feats": image_feats,
+            # "cls_feats": cls_feats,
+            # "raw_cls_feats": x[:, 0],
+            # "image_labels": image_labels,
+            # "image_masks": image_masks,
+            # "text_labels": text_labels,
+            # "text_ids": text_ids,
+            # "text_masks": text_masks,
+            # "patch_index": patch_index,
+        }
+    
+        return ret
+    
+    def vilt_zero_grad(self):
+        self.text_embeddings.zero_grad()
+        self.transformer.zero_grad()
+        self.token_type_embeddings.zero_grad()
+        self.moco_head.zero_grad()
+    
     def get_synonym_by_cos(self, word): 
         if not (word in self.sim_word2id):
             return [word]
@@ -128,26 +214,15 @@ class GreedyAttack_cross_entropy:
         if len(candidates) == 0:
             candidates = [word]
 
-        return candidates[:self.n_candidates]    
+        return list(candidates)[:self.n_candidates]
     
     def get_important_scores(self,grads, words_to_sub_words):
         index_scores = [0.0] * len(words_to_sub_words)
         for i in range(len(words_to_sub_words)):
             matched_tokens  = words_to_sub_words[i]
-            try :
-                agg_grad        = np.mean(grads[matched_tokens], axis=0)
-            except : 
-                print("-------------------------------")
-                print("HERE IS THE ERROR DESCRIPTION\n")
-                print("This is words_to_sub_words", words_to_sub_words)
-                print("This is the len of len(words_to_sub_words)", len(words_to_sub_words))
-                print("This is the len of grads", grads.shape)
-                print("This is i : ", i)
-                print("This is matched_tokens_id : ", matched_tokens)
-                sys.exit("Stop")
-               
-                # Get the norm of the gradient
-                index_scores[i] = np.linalg.norm(agg_grad, ord=1)
+            agg_grad        = np.mean(grads[matched_tokens], axis=0)
+
+            index_scores[i] = np.linalg.norm(agg_grad, ord=1)
         return index_scores
        
     def get_inputs(self,sentences, tokenizer, device):
@@ -168,15 +243,16 @@ class GreedyAttack_cross_entropy:
                 text_masks,
                 text,
                 batch,
-                device          
+                device,
+                k_image,
     ):
-        embedding_layer = self.pl_module.get_input_embeddings()  # word_embeddings 
-        projector_layer    = self.pl_module.nlvr2_classifier.linear2_nlvr2 #----
+        embedding_layer    = self.text_embeddings.word_embeddings  # word_embeddings
+        projector_layer    = self.moco_head.txt_model.linear2
 
         original_state_pro = projector_layer.weight.requires_grad
         projector_layer.weight.requires_grad = True
 
-        original_state_emb  = embedding_layer.weight.requires_grad 
+        original_state_emb = embedding_layer.weight.requires_grad 
         embedding_layer.weight.requires_grad = True                  
 
         emb_grads = []
@@ -191,31 +267,30 @@ class GreedyAttack_cross_entropy:
         emb_hook = embedding_layer.register_full_backward_hook(emb_grad_hook)
         pro_hook = projector_layer.register_full_backward_hook(pro_grad_hook)
 
-        self.pl_module.zero_grad() # Isn't it a problem for accumulated gradient to zeros grad here----
+        self.vilt_zero_grad() # TO-DO problem for accumulated gradient
         
         with torch.enable_grad(): 
             batch["text_ids"]   = input_ids
             batch["text_masks"] = text_masks
             batch["text"]       = text
             
-            infer1 = self.pl_module.infer(
-                batch, mask_text=False, mask_image=False, image_token_type_idx=1
-            )
-            infer2 = self.pl_module.infer(
-                batch, mask_text=False, mask_image=False, image_token_type_idx=2
-            )
-            
-            # NlVR2 output
-            cls_feats = torch.cat([infer1["cls_feats"], infer2["cls_feats"]], dim=-1)
-            nlvr2_logits = self.pl_module.nlvr2_classifier(cls_feats)
-            nlvr2_labels = batch["answers"]
-            nlvr2_labels = torch.tensor(nlvr2_labels).to(self.pl_module.device).long()
-            nlvr2_loss   = F.cross_entropy(nlvr2_logits, nlvr2_labels)
-            nlvr2_loss.backward(retain_graph=True)
+            infer = self.infer(batch, mask_text=False, mask_image=False)
+            image_representation_q, text_representation_q = self.moco_head(infer['image_feats'], infer['text_feats'])
+            q_attacked = nn.functional.normalize(text_representation_q, dim=1)
+
+            ################ RMCL #################
+            l_pos = torch.einsum('nc,nc->n', [q_attacked, k_image]).unsqueeze(-1)
+            l_neg = torch.einsum('nc,ck->nk', [q_attacked, self.pl_module.text_queue.clone().detach()])
+            logits = torch.cat([l_pos, l_neg], dim=1)
+            logits /= self.pl_module.temperature
+            labels = torch.zeros(logits.shape[0], dtype=torch.long)
+            labels = labels.type_as(logits)
+            loss   = self.criterion(logits.float(), labels.long())   
+            loss.backward()
+             ################ RMCL #################               
        
-        grads   = emb_grads[0].cpu().numpy() ### To reflect if it's correct---
-        # Shape is [batch_size,len_txt,768] # this is grads shape (8, 40, 768)
-        
+        grads   = emb_grads[0].cpu().numpy()
+        # Shape is [batch_size,len_txt,768]
         grads_z = pro_grads[0].detach()
         
         embedding_layer.weight.requires_grad = original_state_emb
@@ -223,8 +298,8 @@ class GreedyAttack_cross_entropy:
         emb_hook.remove()
         pro_hook.remove()
 
-        all_representation = nlvr2_logits
-        return grads_z, grads, all_representation
+        text_representation = text_representation_q
+        return grads_z, grads, text_representation
 
     def compute_word_importance  (self, 
                                   words, 
@@ -233,14 +308,16 @@ class GreedyAttack_cross_entropy:
                                   text,
                                   batch,
                                   batch_size,
-                                  device
+                                  device,
+                                  k_image,
                                  ):
         
-        grads_z, grads, all_representation = self.get_grad(input_ids,
+        grads_z, grads, text_representation = self.get_grad(input_ids,
                                                             text_masks,
                                                             text,
                                                             batch,
                                                             device,
+                                                            k_image
                                                            )
         
         sep_idx = (input_ids == self.tokenizer._convert_token_to_id('[SEP]')).nonzero()
@@ -276,7 +353,7 @@ class GreedyAttack_cross_entropy:
             if temp_idx is not None:  
                 self.replace_history[i].add(temp_idx)
         
-        return replace_idx, grads_z, all_representation
+        return replace_idx, grads_z, text_representation
 
     def construct_new_samples(self,      
                               word_idx, 
@@ -292,29 +369,32 @@ class GreedyAttack_cross_entropy:
         
         if self.synonym == 'synonym':
             for i in range(batch_size):
-                # print(i, ori_words[i][word_idx[i]])
-                candidates = self.get_synonym(ori_words[i][word_idx[i]])
-                for new_word in candidates:
-                    # print(new_word)
-                    ori_words[i][word_idx[i]] = new_word
+                if word_idx[i] is not None:
+                    candidates = self.get_synonym(ori_words[i][word_idx[i]])
+                    for new_word in candidates:
+                        # print(new_word)
+                        ori_words[i][word_idx[i]] = new_word
+                        all_new_text.append(' '.join(ori_words[i]))
+                    all_num.append(len(candidates))
+                else:
                     all_new_text.append(' '.join(ori_words[i]))
-                all_num.append(len(candidates))
+                    all_num.append(1)
             return all_new_text, all_num
         
         if self.synonym == 'cos_sim':
             for i in range(batch_size):
-                if word_idx[i] is not None :        #<<<---- changed
+                if word_idx[i] is not None :        
                     candidates   = self.get_synonym_by_cos(ori_words[i][word_idx[i]])
-                    nbr_candidat = len(candidates)  #<<<---- changed
+                    nbr_candidat = len(candidates)  
                     
                     for new_word in candidates:
                         # print(new_word)
                         ori_words[i][word_idx[i]] = new_word
                         all_new_text.append(' '.join(ori_words[i]))
-                else : #<<<---- changed
-                    nbr_candidat = 1 #<<<---- changed
-                    all_new_text.append(' '.join(ori_words[i])) #<<<---- changed
-                all_num.append(nbr_candidat)#<<<---- changed
+                else : 
+                    nbr_candidat = 1 
+                    all_new_text.append(' '.join(ori_words[i]))
+                all_num.append(nbr_candidat)
             return all_new_text, all_num
         raise ValueError("Only use wordnet of cos sim to find new words!")           
     
@@ -331,26 +411,20 @@ class GreedyAttack_cross_entropy:
                 self.words_to_sub_words[i][idx] = np.arange(position, position + length)
                 position += length
 
-    def split_forward(self,batch_c,device):
+    def split_forward(self,batch):
         """Do a Forward pass to get the Joint Representation"""
         with torch.no_grad():
-            infer1 = self.pl_module.infer(
-                batch_c, mask_text=False, mask_image=False, image_token_type_idx=1
-            )
-            infer2 = self.pl_module.infer(
-                batch_c, mask_text=False, mask_image=False, image_token_type_idx=2
-            )
+            infer = self.infer(batch, mask_text=False, mask_image=False)
+            image_representation_q, text_representation_q = self.moco_head(infer['image_feats'], infer['text_feats'])
             
-            # NlVR2 output
-            cls_feats = torch.cat([infer1["cls_feats"], infer2["cls_feats"]], dim=-1)
-            nlvr2_logits = self.pl_module.nlvr2_classifier(cls_feats)
-            
-        all_representation = nlvr2_logits
-        return all_representation 
+        text_representation = text_representation_q
+        return text_representation 
                                             
     def adv_attack_samples(self, 
                            pl_module,            
-                           batch) : 
+                           batch,           
+                           k_image,
+                          ):
 
         self.device    = pl_module.device
         self.criterion = nn.CrossEntropyLoss().cuda(self.device)
@@ -366,11 +440,11 @@ class GreedyAttack_cross_entropy:
         
         # Creat a dictionary with the position of each words for each sentences
         self.calc_words_to_sub_words(cur_words, batch_size)
-        self.pl_module = pl_module
+        self.build_mini_vilt(pl_module)
 
         self.replace_history = [set() for _ in range(batch_size)]
         for iter_idx in range(self.max_loops):
-            # ori_z    : all_representation 
+            # ori_z    : text_representation 
             # vector_z : gradient_projector (project.text.linear2)
             replace_idx, vector_z, ori_z = self.compute_word_importance(words = cur_words,
                                                                  input_ids    = txt_input_ids,
@@ -378,58 +452,72 @@ class GreedyAttack_cross_entropy:
                                                                  text         = text,
                                                                  batch        = batch,
                                                                  batch_size   = batch_size,
-                                                                 device       = self.device
+                                                                 device       = self.device,
+                                                                 k_image      = k_image,
                                                                         )
+            
             all_new_text, all_num = self.construct_new_samples(word_idx     = replace_idx,
                                                                words        = cur_words,
-                                                               batch_size   = batch_size)             
-            all_new_image0          = []
-            all_new_image1          = []
-            all_new_answers         = []
-            all_new_table_name      = []
-            all_new_txt_Labels      = []
-            all_new_txt_ids_mlm     = []
-            all_new_txt_labels_mlm  = []
+                                                               batch_size   = batch_size)
             
-            for idx,count  in enumerate (all_num) :
-                all_new_image0.extend([batch['image_0'][0][idx]for _ in range(count)])
-                all_new_image1.extend([batch['image_1'][0][idx]for _ in range(count)])
-                all_new_answers.extend([batch['answers'][idx]for _ in range(count)])
-                all_new_table_name.extend([batch['table_name'][idx]for _ in range(count)])
-                all_new_txt_Labels.extend([batch['text_labels'][idx]for _ in range(count)])
-                all_new_txt_ids_mlm.extend([batch['text_ids_mlm'][idx]for _ in range(count)])
-                all_new_txt_labels_mlm.extend([batch['text_labels_mlm'][idx]for _ in range(count)])
+            all_new_false_image_0   = []
+            all_new_replica         = []
+            all_new_raw_index       = []
+            all_new_cap_index       = []
+            all_new_img_index       = []
+            all_new_image           = []
+            # if self.pl_module.training:
+            #     all_new_iid             = []
+            all_new_text_labels     = []
+            all_new_text_ids_mlm    = []
+            all_new_text_labels_mlm = []
 
+            for idx,count  in enumerate (all_num) :
+                all_new_false_image_0.extend([batch['false_image_0'][0][idx]for _ in range(count)])
+                all_new_cap_index.extend([batch['cap_index'][idx]for _ in range(count)])
+                all_new_image.extend([batch['image'][0][idx]for _ in range(count)])
+                all_new_replica.extend([batch['replica'][idx]for _ in range(count)])
+                all_new_img_index.extend([batch['img_index'][idx]for _ in range(count)])
+                # if self.pl_module.training:
+                #     all_new_iid.extend([batch['iid'][idx]for _ in range(count)])
+                all_new_raw_index.extend([batch['raw_index'][idx]for _ in range(count)])
+                all_new_text_labels.extend([batch['text_labels'][idx]for _ in range(count)])
+                all_new_text_ids_mlm.extend([batch['text_ids_mlm'][idx]for _ in range(count)])
+                all_new_text_labels_mlm.extend([batch['text_labels_mlm'][idx]for _ in range(count)])
+                
             # Get the correct format
-            all_new_image0          = [torch.stack(all_new_image0)]
-            all_new_image1          = [torch.stack(all_new_image1)]
-            all_new_txt_Labels      = torch.stack(all_new_txt_Labels)
-            all_new_txt_ids_mlm     = torch.stack(all_new_txt_ids_mlm)
-            all_new_txt_labels_mlm  = torch.stack(all_new_txt_labels_mlm)
+            all_new_false_image_0   = [torch.stack(all_new_false_image_0)]
+            all_new_image           = [torch.stack(all_new_image)]
+            all_new_text_labels     = torch.stack(all_new_text_labels)
+            all_new_text_ids_mlm    = torch.stack(all_new_text_ids_mlm)
+            all_new_text_labels_mlm = torch.stack(all_new_text_labels_mlm)
             
-            all_new_input_ids, all_new_text_masks = self.get_inputs(all_new_text,
+            # Get the inputs_ids
+            all_new_text_ids, all_new_text_masks = self.get_inputs(all_new_text,
                                                                    self.tokenizer,
                                                                    self.device)             
-                
-            batch_c                   = {}            
-            batch_c['text']           = all_new_text
-            batch_c['text_ids']       = all_new_input_ids
-            batch_c['text_masks']     = all_new_text_masks
-            batch_c['image_0']        = all_new_image0
-            batch_c['image_1']        = all_new_image1
-            batch_c['answers']        = all_new_answers
-            batch_c['table_name']     = all_new_table_name
-            batch_c['text_labels']    = all_new_txt_Labels
-            batch_c['text_ids_mlm']   = all_new_txt_ids_mlm
-            batch_c['text_labels_mlm']= all_new_txt_labels_mlm       
-            outputs = self.split_forward(batch_c,self.device)  # torch.Size([sum(all_num), 768])
+            batch_c                    = {}            
+            batch_c['false_image_0']   = all_new_false_image_0
+            batch_c['cap_index']       = all_new_cap_index
+            batch_c['image']           = all_new_image
+            batch_c['replica']         = all_new_replica
+            batch_c['img_index']       = all_new_img_index
+            # if self.pl_module.training:
+            #     batch_c['iid']             = all_new_iid
+            batch_c['raw_index']       = all_new_raw_index
+            batch_c['text_labels']     = all_new_text_labels
+            batch_c['text_ids_mlm']    = all_new_text_ids_mlm
+            batch_c['text_labels_mlm'] = all_new_text_labels_mlm
+            batch_c['text']            = all_new_text
+            batch_c['text_ids']        = all_new_text_ids
+            batch_c['text_masks']      = all_new_text_masks
             
+            outputs = self.split_forward(batch_c)  
             outputs = torch.split(outputs, all_num)
             count = 0
+            
             for i, cur_z in enumerate(outputs):
-                # New-orginal all representation
                 cur_z        = cur_z.float() - ori_z[i].float()
-                # repeat grad_proj 
                 z            = torch.repeat_interleave(vector_z[i].float().unsqueeze(0), 
                                                 repeats=len(cur_z), dim=0)
                 cur_z_norm   = cur_z.norm(dim=1)
@@ -445,7 +533,7 @@ class GreedyAttack_cross_entropy:
                     for idx in range(len(cur_words[i])):
                         length = len(self.tokenizer.tokenize(cur_words[i][idx]))
                         if position + length >=  self.max_length : # if Sentence too big
-                            continue 
+                            continue                         
                         self.words_to_sub_words[i][idx] =\
                         np.arange(position, position+length)
                         position += length
@@ -453,7 +541,8 @@ class GreedyAttack_cross_entropy:
                 count += len(cur_z)            
             text = [' '.join(x) for x in cur_words]
             txt_input_ids, text_masks=\
-            self.get_inputs(text,self.tokenizer,self.device)             
+            self.get_inputs(text,self.tokenizer,self.device)
+        
         return {'txt_input_ids' : txt_input_ids,
                 'text_masks'    : text_masks ,
                 'text'          : text}

@@ -27,6 +27,27 @@ class Accuracy(Metric):
     def compute(self):
         return self.correct / self.total
 
+class change_rate(Metric):
+    def __init__(self, dist_sync_on_step=False):
+        super().__init__(dist_sync_on_step=dist_sync_on_step)
+        self.add_state("changed", default=torch.tensor(0.0), dist_reduce_fx="sum")
+        self.add_state("total", default=torch.tensor(0.0), dist_reduce_fx="sum")
+
+    def update(self, logits_attack, logits):
+        logits_attack, logits = (
+            logits_attack.detach().to(self.changed.device),
+            logits.detach().to(self.changed.device),
+        )
+        preds_attack = logits_attack.argmax(dim=-1)
+        preds = logits.argmax(dim=-1)
+        
+        assert preds_attack.shape == preds.shape
+
+        self.changed += torch.sum(preds_attack != preds)
+        self.total += logits_attack.numel()
+
+    def compute(self):
+        return self.changed / self.total    
 
 class Scalar(Metric):
     def __init__(self, dist_sync_on_step=False):
