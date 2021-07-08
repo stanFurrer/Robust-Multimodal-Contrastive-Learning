@@ -103,10 +103,10 @@ def compute_geometric(pl_module, batch,k_image) :
     print("This is the Real versus attacked sentences : ")
     
     for i in range(len(batch["text"])):
-        print("Real sentence----: ",real_sentence["text"][i])
+        print("Real sentence----: ",real_sentence[i])
         print("Attacked sentence: ",attack_words["text"][i])
     
-    txt_original_attacked   = {"original": real_sentence["text"],
+    txt_original_attacked   = {"original": real_sentence,
                                "attacked": attack_words["text"]
                               }
     batch["text"]          = attack_words["text"]

@@ -70,7 +70,6 @@ class GreedyAttack:
         self.text_embeddings = None
         self.transformer = None
         self.token_type_embeddings = None
-        # self.pooler = None
         self.moco_head = None
 
     def init_matrix(self, embedding_path, sim_path): 
@@ -131,7 +130,7 @@ class GreedyAttack:
         text_embeds = self.text_embeddings(text_ids)
     
         if image_embeds is None and image_masks is None:
-            img = batch["image"][0]  # [0] : Because it's a list of one element
+            img = batch["image"][0]
             (
                 image_embeds,
                 image_masks,
@@ -147,8 +146,6 @@ class GreedyAttack:
                 None,
                 None,
             )
-        # image_embeds.shape : [64 217 768] :: [batch,patch,hiddensize]
-        # patch_index shape  : ([64 217 2]), (19,19)) (patch_index, (H,W))
     
         text_embeds, image_embeds = (
             text_embeds + self.token_type_embeddings(torch.zeros_like(text_masks)),
@@ -258,7 +255,7 @@ class GreedyAttack:
         emb_hook = embedding_layer.register_full_backward_hook(emb_grad_hook)
         pro_hook = projector_layer.register_full_backward_hook(pro_grad_hook)
 
-        self.vilt_zero_grad() # TO-DO problem for accumulated gradient
+        self.vilt_zero_grad()
         
         with torch.enable_grad(): 
             batch["text_ids"]   = input_ids

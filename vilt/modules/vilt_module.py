@@ -288,10 +288,6 @@ class ViLTransformerSS(pl.LightningModule):
         image_embeds=None,
         image_masks=None,
     ):
-        # if f"image_{image_token_type_idx - 1}" in batch:
-        #     imgkey = f"image_{image_token_type_idx - 1}"
-        # else:
-        #     imgkey = "image"
         imgkey = "image"
 
         do_mlm = "_mlm" if mask_text else ""
@@ -312,11 +308,6 @@ class ViLTransformerSS(pl.LightningModule):
             max_image_len=self.config["max_image_len"],
             mask_it=mask_image,
         )
-        # else:
-        #     patch_index, image_labels = (
-        #         None,
-        #         None,
-        #     )
 
         text_embeds, image_embeds = (
             text_embeds + self.k_token_type_embeddings(torch.zeros_like(text_masks)),
@@ -339,16 +330,11 @@ class ViLTransformerSS(pl.LightningModule):
             x[:, : text_embeds.shape[1]],
             x[:, text_embeds.shape[1] :],
         )
-        # cls_feats = self.pooler(x)
 
         ret = {
             "text_feats": text_feats,
             "image_feats": image_feats,
-            # "cls_feats": cls_feats,
-            # "raw_cls_feats": x[:, 0],
-            # "image_labels": image_labels,
             "image_masks": image_masks,
-            # "text_labels": text_labels,
             "text_ids": text_ids,
             "text_masks": text_masks,
             "patch_index": patch_index,
