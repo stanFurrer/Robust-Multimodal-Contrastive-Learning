@@ -2,13 +2,11 @@
 from attack.greedy_attack_vilt import GreedyAttack
 from attack.pgd_attack_vilt import PGDAttack
 
-import os #
-import time#
+import os
+import time
 from copy import deepcopy
-from collections import OrderedDict #
-from transformers import BertTokenizer#
-#from Geometric_attack.greedy_attack_vilt import GreedyAttack #
-from Geometric_attack.greedy_attack_vilt_cross_entropy import GreedyAttack_cross_entropy #
+from collections import OrderedDict
+from transformers import BertTokenizer
 ####
 
 import torch

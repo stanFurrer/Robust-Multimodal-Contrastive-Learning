@@ -204,8 +204,9 @@ class GreedyAttack:
 
         return list(candidates)[:self.n_candidates]
     
-    def get_important_scores(self,grads, words_to_sub_words):
+    def get_important_scores(self, grads, words_to_sub_words):
         index_scores = [0.0] * len(words_to_sub_words)
+        print(words_to_sub_words)
         for i in range(len(words_to_sub_words)):
             matched_tokens  = words_to_sub_words[i]
             agg_grad        = np.mean(grads[matched_tokens], axis=0)
