@@ -124,8 +124,7 @@ class PGDAttack:
             # Get gradient
             img_delta_grad = img_delta.grad.clone().detach().float()
             # Get inf_norm gradient (It will be used to normalize the img_delta_grad)
-            denorm = torch.norm(img_delta_grad.view(img_delta_grad.size(0), -1), dim=1, p=float("inf")).view(-1, 1, 1,
-                                                                                                             1)
+            denorm = torch.norm(img_delta_grad.view(img_delta_grad.size(0), -1), dim=1, p=float("inf")).view(-1, 1, 1, 1)
             # Clip gradient to Lower Bound
             denorm = torch.clamp(denorm, min=1e-8)
             # calculate delta_step  with format img_delta
@@ -135,4 +134,5 @@ class PGDAttack:
             # clip the delta if needed
             if self.adv_max_norm_img > 0:
                 img_delta = torch.clamp(img_delta, -self.adv_max_norm_img, self.adv_max_norm_img).detach()
+                
         return img_delta

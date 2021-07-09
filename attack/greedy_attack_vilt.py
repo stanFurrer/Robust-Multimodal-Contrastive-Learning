@@ -204,17 +204,18 @@ class GreedyAttack:
 
         return list(candidates)[:self.n_candidates]
     
-    def get_important_scores(self,grads, words_to_sub_words):
+    def get_important_scores(self, grads, words_to_sub_words):
         index_scores = [0.0] * len(words_to_sub_words)
+        # print(len(words_to_sub_words), words_to_sub_words)
         for i in range(len(words_to_sub_words)):
+            # print(i, words_to_sub_words[i])
             matched_tokens  = words_to_sub_words[i]
             agg_grad        = np.mean(grads[matched_tokens], axis=0)
-
             index_scores[i] = np.linalg.norm(agg_grad, ord=1)
         return index_scores
        
     def get_inputs(self,sentences, tokenizer, device):
-        outputs        = tokenizer(sentences, truncation=True, padding=True,max_length = self.max_length)
+        outputs        = tokenizer(sentences, truncation=True, padding=True, max_length=self.max_length)
         input_ids      = outputs["input_ids"]
         attention_mask = outputs["attention_mask"]
 
@@ -395,7 +396,9 @@ class GreedyAttack:
             self.words_to_sub_words.append({})
             # Loop for each words of a sentences
             for idx in range(len(words[i])):
-                length = len(self.tokenizer.tokenize(words[i][idx]))               
+                length = len(self.tokenizer.tokenize(words[i][idx]))
+                if position + length >= self.max_length:  # if Sentence too big
+                    break
                 self.words_to_sub_words[i][idx] = np.arange(position, position + length)
                 position += length
 
@@ -434,6 +437,7 @@ class GreedyAttack:
         for iter_idx in range(self.max_loops):
             # ori_z    : text_representation 
             # vector_z : gradient_projector (project.text.linear2)
+            # print(cur_words)
             replace_idx, vector_z, ori_z = self.compute_word_importance(words = cur_words,
                                                                  input_ids    = txt_input_ids,
                                                                  text_masks   = text_masks,
@@ -454,7 +458,7 @@ class GreedyAttack:
             all_new_cap_index       = []
             all_new_img_index       = []
             all_new_image           = []
-            all_new_iid             = []
+            # all_new_iid             = []
             all_new_text_labels     = []
             all_new_text_ids_mlm    = []
             all_new_text_labels_mlm = []
@@ -465,7 +469,7 @@ class GreedyAttack:
                 all_new_image.extend([batch['image'][0][idx]for _ in range(count)])
                 all_new_replica.extend([batch['replica'][idx]for _ in range(count)])
                 all_new_img_index.extend([batch['img_index'][idx]for _ in range(count)])
-                all_new_iid.extend([batch['iid'][idx]for _ in range(count)])
+                # all_new_iid.extend([batch['iid'][idx]for _ in range(count)])
                 all_new_raw_index.extend([batch['raw_index'][idx]for _ in range(count)])
                 all_new_text_labels.extend([batch['text_labels'][idx]for _ in range(count)])
                 all_new_text_ids_mlm.extend([batch['text_ids_mlm'][idx]for _ in range(count)])
@@ -488,7 +492,7 @@ class GreedyAttack:
             batch_c['image']           = all_new_image
             batch_c['replica']         = all_new_replica
             batch_c['img_index']       = all_new_img_index
-            batch_c['iid']             = all_new_iid
+            # batch_c['iid']             = all_new_iid
             batch_c['raw_index']       = all_new_raw_index
             batch_c['text_labels']     = all_new_text_labels
             batch_c['text_ids_mlm']    = all_new_text_ids_mlm
@@ -511,23 +515,33 @@ class GreedyAttack:
                 project_z    = torch.mul(cur_z_norm, cosin_z)
                 selected_idx = torch.argmax(project_z)
                 if project_z[selected_idx] > 0:
-                    cur_words[i] = \
-                    all_new_text[int(selected_idx)+count].split(' ')
+                    cur_words[i] = all_new_text[int(selected_idx)+count].split(' ')
                     self.words_to_sub_words[i] = {}
                     position = 0
                     for idx in range(len(cur_words[i])):
                         length = len(self.tokenizer.tokenize(cur_words[i][idx]))
-                        if position + length >=  self.max_length : # if Sentence too big
-                            continue                         
-                        self.words_to_sub_words[i][idx] =\
-                        np.arange(position, position+length)
+                        if position + length >= self.max_length:  # if Sentence too big
+                            break
+                        self.words_to_sub_words[i][idx] = np.arange(position, position+length)
                         position += length
                             
                 count += len(cur_z)            
             text = [' '.join(x) for x in cur_words]
             txt_input_ids, text_masks=\
-            self.get_inputs(text,self.tokenizer,self.device)
+            self.get_inputs(text, self.tokenizer, self.device)
         
+        num_changes = []
+        change_rate = []
+        for old_words, new_words in zip(original_words, cur_words):
+            changes = sum(~(np.array(old_words) == np.array(new_words)))
+            num_changes.append(changes)
+            change_rate.append(changes / len(old_words))
+            
+        # print(num_changes)
+        # print(change_rate)
+            
         return {'txt_input_ids' : txt_input_ids,
-                'text_masks'    : text_masks ,
-                'text'          : text}
+                'text_masks'    : text_masks,
+                'text'          : text,
+                'num_changes'   : np.mean(num_changes),
+                'change_rate'   : np.mean(change_rate)}
