@@ -125,10 +125,10 @@ def task_moco():
     image_attack = True
     loss_names = _loss_names({"moco": 1})
     # batch_size = 4096
-    batch_size = 4096
+    batch_size = 128
     max_epoch = 10
     max_image_len = 200
-    test_only = True
+    test_only = False
     # Attacks parameters
     # PGD
     adv_steps_img = 5

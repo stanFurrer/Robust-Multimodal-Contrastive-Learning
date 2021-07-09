@@ -2,6 +2,7 @@ import sys
 import time
 from copy import deepcopy, copy#
 
+import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
@@ -96,13 +97,17 @@ def compute_pgd(pl_module, batch, k_text):
     img_delta = pl_module.pgd_attacker.pgd_attack(pl_module, deepcopy(batch), k_text)
     # add debug code here
     batch["image"][0] = batch["image"][0] + img_delta
+    
+    phase = "train" if pl_module.training else "val"
+    delta_range = getattr(pl_module, f"{phase}_moco_delta")(torch.linalg.norm(img_delta, dim=1).mean())
+    pl_module.log(f"moco/{phase}/delta", delta_range)
+    
     return batch
 
 
 def compute_geometric(pl_module, batch, k_image):
     # real_sentence = batch["text"]
-    attack_words = \
-    pl_module.greedy_attacker.adv_attack_samples(pl_module, batch, k_image)
+    attack_words = pl_module.greedy_attacker.adv_attack_samples(pl_module, batch, k_image)
     
     # print("This is the Real versus attacked sentences : ")
     
@@ -116,6 +121,12 @@ def compute_geometric(pl_module, batch, k_image):
     batch["text"]          = attack_words["text"]
     batch["txt_input_ids"] = attack_words["txt_input_ids"]
     batch["text_masks"]    = attack_words["text_masks"]
+    
+    phase = "train" if pl_module.training else "val"
+    num_changes = getattr(pl_module, f"{phase}_moco_num_changes")(attack_words["num_changes"])
+    change_rate = getattr(pl_module, f"{phase}_moco_change_rate")(attack_words["change_rate"])
+    pl_module.log(f"moco/{phase}/num_changes", num_changes)
+    pl_module.log(f"moco/{phase}/change_rate", change_rate)
 
     return batch #, txt_original_attacked
 
@@ -160,6 +171,7 @@ def compute_moco_contrastive(pl_module, batch):
             pl_module.image_queue_ptr[0] = ptr
 
     loss = 0
+    loss_num = 0
     loss_fct = nn.CrossEntropyLoss()
     ret = {}
 
@@ -182,32 +194,46 @@ def compute_moco_contrastive(pl_module, batch):
         q = nn.functional.normalize(image_representation_q, dim=1)
 
         # attacked image: close to the same image before attack; away from different images.
+        neg_img = pl_module.image_queue.clone().detach()
         l_pos = torch.einsum('nc,nc->n', [q, k_image]).unsqueeze(-1)
-        l_neg = torch.einsum('nc,ck->nk', [q, pl_module.image_queue.clone().detach()])
+        l_neg = torch.einsum('nc,ck->nk', [q, neg_img])
         logits = torch.cat([l_pos, l_neg], dim=1)
         logits /= pl_module.temperature
     
         labels = torch.zeros(logits.shape[0], dtype=torch.long)
         labels = labels.type_as(logits)
 
-        ret["image_image_logits"] = logits
-        ret["image_image_labels"] = labels
+        ret["image_image_pos_dist"] = torch.linalg.norm(q-k_image, dim=1).mean()
+        dist = 0
+        for sub_q in q:
+            dist += torch.linalg.norm(sub_q-neg_img.T, dim=1).mean()
+        ret["image_image_neg_dist"] = dist / q.shape[0]
+        # ret["image_image_logits"] = logits
+        # ret["image_image_labels"] = labels
 
         loss = loss + loss_fct(logits.float(), labels.long())
+        loss_num += 1
         
         # attacked image: close to the corresponding text; away from other text
+        neg_txt = pl_module.text_queue.clone().detach()
         l_pos = torch.einsum('nc,nc->n', [q, k_text]).unsqueeze(-1)
-        l_neg = torch.einsum('nc,ck->nk', [q, pl_module.text_queue.clone().detach()])
+        l_neg = torch.einsum('nc,ck->nk', [q, neg_txt])
         logits = torch.cat([l_pos, l_neg], dim=1)
         logits /= pl_module.temperature
 
         labels = torch.zeros(logits.shape[0], dtype=torch.long)
         labels = labels.type_as(logits)
-
-        ret["image_text_logits"] = logits
-        ret["image_text_labels"] = labels
+        
+        ret["image_text_pos_dist"] = torch.linalg.norm(q - k_text, dim=1).mean()
+        dist = 0
+        for sub_q in q:
+            dist += torch.linalg.norm(sub_q - neg_txt.T, dim=1).mean()
+        ret["image_text_neg_dist"] = dist / q.shape[0]
+        # ret["image_text_logits"] = logits
+        # ret["image_text_labels"] = labels
 
         loss = loss + loss_fct(logits.float(), labels.long())
+        loss_num += 1
 
     if pl_module.text_attack:
         attacked_batch = compute_geometric(pl_module, deepcopy(batch), k_image)
@@ -216,37 +242,66 @@ def compute_moco_contrastive(pl_module, batch):
         q = nn.functional.normalize(text_representation_q, dim=1)
 
         # attacked text: close to the same text; away from different text
+        neg_txt = pl_module.text_queue.clone().detach()
         l_pos = torch.einsum('nc,nc->n', [q, k_text]).unsqueeze(-1)
-        l_neg = torch.einsum('nc,ck->nk', [q, pl_module.text_queue.clone().detach()])
+        l_neg = torch.einsum('nc,ck->nk', [q, neg_txt])
         logits = torch.cat([l_pos, l_neg], dim=1)
         logits /= pl_module.temperature
     
         labels = torch.zeros(logits.shape[0], dtype=torch.long)
         labels = labels.type_as(logits)
-
-        ret["text_text_logits"] = logits
-        ret["text_text_labels"] = labels
+        
+        ret["text_text_pos_dist"] = torch.linalg.norm(q - k_text, dim=1).mean()
+        dist = 0
+        for sub_q in q:
+            dist += torch.linalg.norm(sub_q - neg_txt.T, dim=1).mean()
+        ret["text_text_neg_dist"] = dist / q.shape[0]
+        # ret["text_text_logits"] = logits
+        # ret["text_text_labels"] = labels
 
         loss = loss + loss_fct(logits.float(), labels.long())
+        loss_num += 1
 
         # attacked text: close to the corresponding image, away from other images
+        neg_img = pl_module.image_queue.clone().detach()
         l_pos = torch.einsum('nc,nc->n', [q, k_image]).unsqueeze(-1)
-        l_neg = torch.einsum('nc,ck->nk', [q, pl_module.image_queue.clone().detach()])
+        l_neg = torch.einsum('nc,ck->nk', [q, neg_img])
         logits = torch.cat([l_pos, l_neg], dim=1)
         logits /= pl_module.temperature
 
         labels = torch.zeros(logits.shape[0], dtype=torch.long)
         labels = labels.type_as(logits)
-
-        ret["text_image_logits"] = logits
-        ret["text_image_labels"] = labels
+        
+        ret["text_image_pos_dist"] = torch.linalg.norm(q - k_image, dim=1).mean()
+        dist = 0
+        for sub_q in q:
+            dist += torch.linalg.norm(sub_q - neg_img.T, dim=1).mean()
+        ret["text_image_neg_dist"] = dist / q.shape[0]
+        # ret["text_image_pos_dist"] = torch.linalg.norm(q-k_image).mean()
+        # ret["text_image_neg_dist"] = torch.linalg.norm(q-neg_img, dim=1).mean()
+        # ret["text_image_logits"] = logits
+        # ret["text_image_labels"] = labels
 
         loss = loss + loss_fct(logits.float(), labels.long())
+        loss_num += 1
 
     _dequeue_and_enqueue(k_text, 'text')
     _dequeue_and_enqueue(k_image, 'image')
 
-    ret["moco_loss"] = loss
+    ret["moco_loss"] = loss / loss_num
+    
+    phase = "train" if pl_module.training else "val"
+    loss = getattr(pl_module, f"{phase}_moco_loss")(ret["moco_loss"])
+    pl_module.log(f"moco/{phase}/loss", loss)
+    
+    img_img_dist = getattr(pl_module, f"{phase}_moco_img_img_dist")(ret["image_image_neg_dist"] - ret["image_image_pos_dist"])
+    pl_module.log(f"moco/{phase}/img_img_dist", img_img_dist)
+    img_txt_dist = getattr(pl_module, f"{phase}_moco_img_txt_dist")(ret["image_text_neg_dist"] - ret["image_text_pos_dist"])
+    pl_module.log(f"moco/{phase}/img_txt_dist", img_txt_dist)
+    txt_txt_dist = getattr(pl_module, f"{phase}_moco_txt_txt_dist")(ret["text_text_neg_dist"] - ret["text_text_pos_dist"])
+    pl_module.log(f"moco/{phase}/txt_txt_dist", txt_txt_dist)
+    txt_img_dist = getattr(pl_module, f"{phase}_moco_txt_img_dist")(ret["text_image_neg_dist"] - ret["text_image_pos_dist"])
+    pl_module.log(f"moco/{phase}/txt_img_dist", txt_img_dist)
     
     return ret
 
