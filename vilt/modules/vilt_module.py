@@ -1,6 +1,6 @@
 #### New
-from attack.greedy_attack_vilt import GreedyAttack
-from attack.pgd_attack_vilt import PGDAttack
+from attack.greedy_attack_vilt import GreedyAttack_moco, GreedyAttack_barlowtwins
+from attack.pgd_attack_vilt import PGDAttack_moco, PGDAttack_bartlowtwins
 
 import os
 import time
@@ -91,11 +91,25 @@ class ViLTransformerSS(pl.LightningModule):
             self.register_buffer("image_queue_ptr", torch.zeros(1, dtype=torch.long))
             if self.text_attack:
                 print("----Loading greedy attack ----")
-                self.greedy_attacker = GreedyAttack(config)
+                self.greedy_attacker = GreedyAttack_moco(config)
                 print("----Greedy attack Loaded ----")
             if self.image_attack:
-                self.pgd_attacker = PGDAttack(config)
-               
+                self.pgd_attacker = PGDAttack_moco(config)
+
+        if config["loss_names"]["barlowtwins"] > 0:
+            self.per_step_bs = config["num_gpus"] * config["num_nodes"]
+            self.barlowtwins_head = heads.BarlowTwinsHead(config["hidden_size"], [8192, 8192], 8192)
+            self.text_attack = config["text_attack"]
+            self.image_attack = config["image_attack"]
+            self.adv_lr = config["adv_lr"]
+            self.loss_weight = 0.001
+            if self.text_attack:
+                print("----Loading greedy attack ----")
+                self.greedy_attacker = GreedyAttack_barlowtwins(config)
+                print("----Greedy attack Loaded ----")
+            if self.image_attack:
+                self.pgd_attacker = PGDAttack_bartlowtwins(config)
+            
         # ===================== Downstream ===================== #
         if (
             self.hparams.config["load_path"] != ""
@@ -192,8 +206,8 @@ class ViLTransformerSS(pl.LightningModule):
             param_k.data.copy_(param_q.data)
             param_k.requires_grad = False
         
-    def get_input_embeddings(self):
-        return self.text_embeddings.word_embeddings
+    # def get_input_embeddings(self):
+    #     return self.text_embeddings.word_embeddings
     
     def infer(
         self,
@@ -387,6 +401,9 @@ class ViLTransformerSS(pl.LightningModule):
         # MoCo Contrasive framework
         if "moco" in self.current_tasks:
             ret.update(objectives.compute_moco_contrastive(self, batch))
+        
+        if "barlowtwins" in self.current_tasks:
+            ret.update(objectives.compute_barlowtwins_contrastive(self, batch))
             
         return ret
 

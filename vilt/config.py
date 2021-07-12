@@ -6,6 +6,7 @@ ex = Experiment("ViLT")
 def _loss_names(d):
     ret = {
         "moco": 0,
+        "barlowtwins": 0,
         "itm": 0,
         "mlm": 0,
         "mpp": 0,
@@ -72,6 +73,7 @@ def config():
     image_attack = False
     momentum = 1.0
     temperature = 1.0
+    adv_lr = 0.0051
     
     # attacks
     #PGD
@@ -128,7 +130,7 @@ def task_moco():
     batch_size = 128
     max_epoch = 10
     max_image_len = 200
-    test_only = False
+    test_only = True
     # Attacks parameters
     # PGD
     adv_steps_img = 5
@@ -142,7 +144,36 @@ def task_moco():
     synonym = "cos_sim"
     embedding_path = './attack/counter-fitted-vectors.txt'
     sim_path = './attack/cos_sim_counter_fitting.npy'
-    
+
+
+@ex.named_config
+def task_barlowtwins():
+    exp_name = "barlowtwins"
+    # datasets = ["coco", "vg", "sbu", "gcc"]
+    datasets = ["coco"]
+    text_attack = True
+    image_attack = False
+    loss_names = _loss_names({"barlowtwins": 1})
+    adv_lr = 0.0051
+    batch_size = 256
+    max_epoch = 10
+    max_image_len = 200
+    test_only = True
+    # Attacks parameters
+    # PGD
+    adv_steps_img = 3
+    adv_lr_img = 0.5
+    adv_max_norm_img = 0.1
+    # Geometric
+    n_candidates = 10
+    max_loops = 10
+    sim_thred = 0.5
+    cos_sim = True
+    synonym = "cos_sim"
+    embedding_path = './attack/counter-fitted-vectors.txt'
+    sim_path = './attack/cos_sim_counter_fitting.npy'
+
+
 @ex.named_config
 def task_mlm_itm():
     exp_name = "mlm_itm"
