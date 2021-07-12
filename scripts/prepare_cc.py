@@ -11,6 +11,7 @@ from tqdm import tqdm
 from PIL import Image
 from datetime import datetime
 import torch.multiprocessing as mp
+from vilt.utils.write_conceptual_caption import make_arrow
 
 
 headers = {
