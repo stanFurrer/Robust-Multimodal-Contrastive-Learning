@@ -4,14 +4,23 @@ import pytorch_lightning as pl
 
 from vilt.config import ex
 from vilt.modules.vilt_module import ViLTransformerSS
-#from vilt.modules.vilt_module_correct import ViLTransformerSS
 from vilt.datamodules.multitask_datamodule import MTDataModule
 
 
 @ex.automain
 def main(_config):
     _config = copy.deepcopy(_config)
-
+    print("------------------------------")
+    if _config["image_attack"] : 
+        print("Hyper parameter for pgd")
+        print("adv_lr_img :",_config["adv_lr_img"])
+        print("adv_max_norm_img :",_config["adv_max_norm_img"])
+    if _config["text_attack"] :
+        print("\nHyper parameter for Geometric")
+        print("n_candidates :",_config["n_candidates"])
+        print("max_loops :",_config["max_loops"])        
+    print("------------------------------\n")    
+        
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '12355'
     

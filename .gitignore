@@ -27,3 +27,9 @@ README.md
 TRAIN.md
 EVAL.md
 DATA.md
+IMG_ATTACK_NLVR2.sh
+SLURM/
+TXT_ATTACK_NLVR2.sh
+attacks_analysis/
+old_code.py
+vilt/modules/vilt_module_correct.py

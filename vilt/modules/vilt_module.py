@@ -7,7 +7,6 @@ import time#
 from copy import deepcopy
 from collections import OrderedDict #
 from transformers import BertTokenizer#
-#from Geometric_attack.greedy_attack_vilt import GreedyAttack #
 from Geometric_attack.greedy_attack_vilt_cross_entropy import GreedyAttack_cross_entropy #
 ####
 
@@ -153,7 +152,7 @@ class ViLTransformerSS(pl.LightningModule):
             self.token_type_embeddings.weight.data[2, :] = emb_data[1, :]   
             #param attacks
             self.image_attack = config["image_attack"]
-            self.text_attack = config["text_attack"]
+            self.text_attack  = config["text_attack"]
             if config["text_attack"] : 
                 self.n_candidates = config["n_candidates"]
                 self.max_loops = config["max_loops"]     

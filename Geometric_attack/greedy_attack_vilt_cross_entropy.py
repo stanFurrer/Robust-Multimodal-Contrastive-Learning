@@ -133,9 +133,10 @@ class GreedyAttack_cross_entropy:
     def get_important_scores(self,grads, words_to_sub_words):
         index_scores = [0.0] * len(words_to_sub_words)
         for i in range(len(words_to_sub_words)):
-            matched_tokens  = words_to_sub_words[i]
             try :
+                matched_tokens  = words_to_sub_words[i]
                 agg_grad        = np.mean(grads[matched_tokens], axis=0)
+                index_scores[i] = np.linalg.norm(agg_grad, ord=1)
             except : 
                 print("-------------------------------")
                 print("HERE IS THE ERROR DESCRIPTION\n")
@@ -146,8 +147,7 @@ class GreedyAttack_cross_entropy:
                 print("This is matched_tokens_id : ", matched_tokens)
                 sys.exit("Stop")
                
-                # Get the norm of the gradient
-                index_scores[i] = np.linalg.norm(agg_grad, ord=1)
+            # Get the norm of the gradient
         return index_scores
        
     def get_inputs(self,sentences, tokenizer, device):
@@ -213,7 +213,7 @@ class GreedyAttack_cross_entropy:
             nlvr2_loss   = F.cross_entropy(nlvr2_logits, nlvr2_labels)
             nlvr2_loss.backward(retain_graph=True)
        
-        grads   = emb_grads[0].cpu().numpy() ### To reflect if it's correct---
+        grads   = emb_grads[0].cpu().numpy() 
         # Shape is [batch_size,len_txt,768] # this is grads shape (8, 40, 768)
         
         grads_z = pro_grads[0].detach()
@@ -445,7 +445,7 @@ class GreedyAttack_cross_entropy:
                     for idx in range(len(cur_words[i])):
                         length = len(self.tokenizer.tokenize(cur_words[i][idx]))
                         if position + length >=  self.max_length : # if Sentence too big
-                            continue 
+                            break 
                         self.words_to_sub_words[i][idx] =\
                         np.arange(position, position+length)
                         position += length
@@ -453,7 +453,19 @@ class GreedyAttack_cross_entropy:
                 count += len(cur_z)            
             text = [' '.join(x) for x in cur_words]
             txt_input_ids, text_masks=\
-            self.get_inputs(text,self.tokenizer,self.device)             
+            self.get_inputs(text,self.tokenizer,self.device)
+            
+        num_changes = []
+        change_rate = []
+        for old_words, new_words in zip(original_words, cur_words):
+            changes = sum(~(np.array(old_words) == np.array(new_words)))
+            num_changes.append(changes)
+            change_rate.append(changes / len(old_words))
+            
+            
         return {'txt_input_ids' : txt_input_ids,
                 'text_masks'    : text_masks ,
-                'text'          : text}
+                'text'          : text,
+                'num_changes'   : np.mean(num_changes),
+                'change_rate'   : np.mean(change_rate)}
+    
