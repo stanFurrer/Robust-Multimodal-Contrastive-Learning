@@ -93,19 +93,19 @@ def optimal_transport_dist(
     return distance
 
 
-def compute_pgd(pl_module, batch, k_text):
-    img_delta = pl_module.pgd_attacker.pgd_attack(pl_module, deepcopy(batch), k_text)
+def compute_pgd(pl_module, batch, loss_name, k_text=None):
+    img_delta = pl_module.pgd_attacker.pgd_attack(pl_module, batch, k_text)
     # add debug code here
     batch["image"][0] = batch["image"][0] + img_delta
     
     phase = "train" if pl_module.training else "val"
-    delta_range = getattr(pl_module, f"{phase}_moco_delta")(torch.linalg.norm(img_delta, dim=1).mean())
-    pl_module.log(f"moco/{phase}/delta", delta_range)
+    delta_range = getattr(pl_module, f"{phase}_{loss_name}_delta")(torch.linalg.norm(img_delta, dim=1).mean())
+    pl_module.log(f"{loss_name}/{phase}/delta", delta_range)
     
     return batch
 
 
-def compute_geometric(pl_module, batch, k_image):
+def compute_geometric(pl_module, batch, loss_name, k_image=None):
     # real_sentence = batch["text"]
     attack_words = pl_module.greedy_attacker.adv_attack_samples(pl_module, batch, k_image)
     
@@ -123,10 +123,10 @@ def compute_geometric(pl_module, batch, k_image):
     batch["text_masks"]    = attack_words["text_masks"]
     
     phase = "train" if pl_module.training else "val"
-    num_changes = getattr(pl_module, f"{phase}_moco_num_changes")(attack_words["num_changes"])
-    change_rate = getattr(pl_module, f"{phase}_moco_change_rate")(attack_words["change_rate"])
-    pl_module.log(f"moco/{phase}/num_changes", num_changes)
-    pl_module.log(f"moco/{phase}/change_rate", change_rate)
+    num_changes = getattr(pl_module, f"{phase}_{loss_name}_num_changes")(attack_words["num_changes"])
+    change_rate = getattr(pl_module, f"{phase}_{loss_name}_change_rate")(attack_words["change_rate"])
+    pl_module.log(f"{loss_name}/{phase}/num_changes", num_changes)
+    pl_module.log(f"{loss_name}/{phase}/change_rate", change_rate)
 
     return batch #, txt_original_attacked
 
@@ -188,7 +188,7 @@ def compute_moco_contrastive(pl_module, batch):
         k_image = nn.functional.normalize(image_representation_k, dim=1)
 
     if pl_module.image_attack:
-        attacked_batch = compute_pgd(pl_module, deepcopy(batch), k_text)
+        attacked_batch = compute_pgd(pl_module, deepcopy(batch), "moco", k_text)
         infer = pl_module.infer(attacked_batch, mask_text=False, mask_image=False)
         image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
         q = nn.functional.normalize(image_representation_q, dim=1)
@@ -236,7 +236,7 @@ def compute_moco_contrastive(pl_module, batch):
         loss_num += 1
 
     if pl_module.text_attack:
-        attacked_batch = compute_geometric(pl_module, deepcopy(batch), k_image)
+        attacked_batch = compute_geometric(pl_module, deepcopy(batch), "moco", k_image)
         infer = pl_module.infer(attacked_batch, mask_text=False, mask_image=False)
         image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
         q = nn.functional.normalize(text_representation_q, dim=1)
@@ -305,6 +305,54 @@ def compute_moco_contrastive(pl_module, batch):
     
     return ret
 
+
+def compute_barlowtwins_contrastive(pl_module, batch):
+    loss = 0
+    loss_num = 0
+    ret = {}
+    
+    def off_diagonal(x):
+        n, m = x.shape
+        assert n == m
+        return  x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
+    
+    if pl_module.image_attack:
+        attacked_batch = compute_pgd(pl_module, deepcopy(batch), "barlowtwins")
+        infer = pl_module.infer(attacked_batch, mask_text=False, mask_image=False)
+        image_representation, text_representation = pl_module.barlowtwins_head(infer['image_feats'], infer['text_feats'])
+        c = image_representation.T @ text_representation
+        
+        c.div_(pl_module.per_step_bs)
+        torch.distributed.all_reduce(c)
+        
+        on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
+        off_diag = off_diagonal(c).pow_(2).sum()
+        
+        loss = on_diag + pl_module.adv_lr * off_diag
+        loss_num += 1
+
+    if pl_module.text_attack:
+        attacked_batch = compute_geometric(pl_module, deepcopy(batch), "barlowtwins")
+        infer = pl_module.infer(attacked_batch, mask_text=False, mask_image=False)
+        image_representation, text_representation = pl_module.barlowtwins_head(infer['image_feats'], infer['text_feats'])
+        c = image_representation.T @ text_representation
+    
+        c.div_(pl_module.per_step_bs)
+        torch.distributed.all_reduce(c)
+    
+        on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
+        off_diag = off_diagonal(c).pow_(2).sum()
+    
+        loss = on_diag + pl_module.adv_lr * off_diag
+        loss_num += 1
+        
+    ret["barlowtwins_loss"] = loss / loss_num * pl_module.loss_weight
+
+    phase = "train" if pl_module.training else "val"
+    loss = getattr(pl_module, f"{phase}_barlowtwins_loss")(ret["barlowtwins_loss"])
+    pl_module.log(f"barlowtwins/{phase}/loss", loss)
+    
+    return ret
 
 def compute_mlm(pl_module, batch):
     infer = pl_module.infer(batch, mask_text=True, mask_image=False)

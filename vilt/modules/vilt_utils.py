@@ -59,6 +59,17 @@ def set_metrics(pl_module):
                 setattr(pl_module, f"{split}_{k}_img_txt_dist", Scalar())
                 setattr(pl_module, f"{split}_{k}_txt_txt_dist", Scalar())
                 setattr(pl_module, f"{split}_{k}_txt_img_dist", Scalar())
+            elif k == "barlowtwins":
+                if pl_module.image_attack:
+                    setattr(pl_module, f"{split}_{k}_delta", Scalar())
+                if pl_module.text_attack:
+                    setattr(pl_module, f"{split}_{k}_num_changes", Scalar())
+                    setattr(pl_module, f"{split}_{k}_change_rate", Scalar())
+                setattr(pl_module, f"{split}_{k}_loss", Scalar())
+                setattr(pl_module, f"{split}_{k}_img_img_dist", Scalar())
+                setattr(pl_module, f"{split}_{k}_img_txt_dist", Scalar())
+                setattr(pl_module, f"{split}_{k}_txt_txt_dist", Scalar())
+                setattr(pl_module, f"{split}_{k}_txt_img_dist", Scalar())
             else:
                 setattr(pl_module, f"{split}_{k}_accuracy", Accuracy())
                 setattr(pl_module, f"{split}_{k}_loss", Scalar())
@@ -196,7 +207,7 @@ def epoch_wrapup(pl_module):
             )
             getattr(pl_module, f"{phase}_{loss_name}_wpa_loss").reset()
             
-        elif loss_name == "moco":
+        elif loss_name == "moco" or loss_name == "barlowtwins":
             if pl_module.image_attack:
                 value = getattr(pl_module, f"{phase}_{loss_name}_delta").compute()
                 pl_module.log(f"{loss_name}/{phase}/img_delta_epoch", value)
@@ -208,10 +219,9 @@ def epoch_wrapup(pl_module):
                 value = getattr(pl_module, f"{phase}_{loss_name}_change_rate").compute()
                 pl_module.log(f"{loss_name}/{phase}/txt_change_rate", value)
                 getattr(pl_module, f"{phase}_{loss_name}_change_rate").reset()
-            pl_module.log(
-                f"{loss_name}/{phase}/loss_epoch",
-                getattr(pl_module, f"{phase}_{loss_name}_loss").compute(),
-            )
+                
+            value = getattr(pl_module, f"{phase}_{loss_name}_loss").compute()
+            pl_module.log(f"{loss_name}/{phase}/loss_epoch", value)
             getattr(pl_module, f"{phase}_{loss_name}_loss").reset()
             pl_module.log(
                 f"{loss_name}/{phase}/img_img_dist_epoch",
