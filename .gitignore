@@ -7,6 +7,7 @@ vilt/modules/.vilt_module.py.swp
 vilt/modules/__pycache__/
 vilt/transforms/__pycache__/
 vilt/utils/__pycache__/
+vilt/__init__.pyc
 *.sh
 weights/
 result/
