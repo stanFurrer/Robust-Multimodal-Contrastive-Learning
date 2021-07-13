@@ -65,7 +65,7 @@ class ViLTransformerSS(pl.LightningModule):
             self.mpp_score.apply(objectives.init_weights)
         
         if config["loss_names"]["moco"] > 0:
-            self.per_step_bs = config["num_gpus"] * config["num_nodes"]
+            self.per_step_bs = config["num_gpus"] * config["num_nodes"] * config["per_gpu_batchsize"]
             self.k_text_embeddings = BertEmbeddings(bert_config)
             self._shadow_layer(self.text_embeddings, self.k_text_embeddings)
             self.k_token_type_embeddings = nn.Embedding(2, config["hidden_size"])
@@ -97,7 +97,7 @@ class ViLTransformerSS(pl.LightningModule):
                 self.pgd_attacker = PGDAttack_moco(config)
 
         if config["loss_names"]["barlowtwins"] > 0:
-            self.per_step_bs = config["num_gpus"] * config["num_nodes"]
+            self.per_step_bs = config["num_gpus"] * config["num_nodes"] * config["per_gpu_batchsize"]
             self.barlowtwins_head = heads.BarlowTwinsHead(config["hidden_size"], [8192, 8192], 8192)
             self.text_attack = config["text_attack"]
             self.image_attack = config["image_attack"]
