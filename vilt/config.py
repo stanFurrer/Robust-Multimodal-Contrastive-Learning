@@ -130,7 +130,7 @@ def task_moco():
     batch_size = 128
     max_epoch = 10
     max_image_len = 200
-    test_only = True
+    test_only = False
     # Attacks parameters
     # PGD
     adv_steps_img = 5

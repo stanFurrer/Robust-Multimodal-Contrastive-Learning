@@ -99,8 +99,8 @@ def compute_pgd(pl_module, batch, loss_name, k_text=None):
     batch["image"][0] = batch["image"][0] + img_delta
     
     phase = "train" if pl_module.training else "val"
-    delta_range = getattr(pl_module, f"{phase}_{loss_name}_delta")(torch.linalg.norm(img_delta, dim=1).mean())
-    pl_module.log(f"{loss_name}/{phase}/delta", delta_range)
+    delta_range = torch.linalg.norm(img_delta, dim=1).mean()
+    pl_module.log(f"{loss_name}_attack/{phase}/delta", delta_range)
     
     return batch
 
@@ -123,10 +123,8 @@ def compute_geometric(pl_module, batch, loss_name, k_image=None):
     batch["text_masks"]    = attack_words["text_masks"]
     
     phase = "train" if pl_module.training else "val"
-    num_changes = getattr(pl_module, f"{phase}_{loss_name}_num_changes")(attack_words["num_changes"])
-    change_rate = getattr(pl_module, f"{phase}_{loss_name}_change_rate")(attack_words["change_rate"])
-    pl_module.log(f"{loss_name}/{phase}/num_changes", num_changes)
-    pl_module.log(f"{loss_name}/{phase}/change_rate", change_rate)
+    pl_module.log(f"{loss_name}_attack/{phase}/num_changes", attack_words["num_changes"])
+    pl_module.log(f"{loss_name}_attack/{phase}/change_rate", attack_words["change_rate"])
 
     return batch #, txt_original_attacked
 
@@ -292,16 +290,19 @@ def compute_moco_contrastive(pl_module, batch):
     
     phase = "train" if pl_module.training else "val"
     loss = getattr(pl_module, f"{phase}_moco_loss")(ret["moco_loss"])
-    pl_module.log(f"moco/{phase}/loss", loss)
+    pl_module.log(f"moco_loss/step/{phase}", loss)
     
-    img_img_dist = getattr(pl_module, f"{phase}_moco_img_img_dist")(ret["image_image_neg_dist"] - ret["image_image_pos_dist"])
-    pl_module.log(f"moco/{phase}/img_img_dist", img_img_dist)
-    img_txt_dist = getattr(pl_module, f"{phase}_moco_img_txt_dist")(ret["image_text_neg_dist"] - ret["image_text_pos_dist"])
-    pl_module.log(f"moco/{phase}/img_txt_dist", img_txt_dist)
-    txt_txt_dist = getattr(pl_module, f"{phase}_moco_txt_txt_dist")(ret["text_text_neg_dist"] - ret["text_text_pos_dist"])
-    pl_module.log(f"moco/{phase}/txt_txt_dist", txt_txt_dist)
-    txt_img_dist = getattr(pl_module, f"{phase}_moco_txt_img_dist")(ret["text_image_neg_dist"] - ret["text_image_pos_dist"])
-    pl_module.log(f"moco/{phase}/txt_img_dist", txt_img_dist)
+    pl_module.log(f"moco_dist_{phase}_img_img/img_img_pos_dist", ret["image_image_pos_dist"])
+    pl_module.log(f"moco_dist_{phase}_img_img/img_img_neg_dist", ret["image_image_neg_dist"])
+
+    pl_module.log(f"moco_dist_{phase}_img_txt/img_txt_pos_dist", ret["image_text_pos_dist"])
+    pl_module.log(f"moco_dist_{phase}_img_txt/img_txt_neg_dist", ret["image_text_neg_dist"])
+
+    pl_module.log(f"moco_dist_{phase}_txt_txt/txt_txt_pos_dist", ret["text_text_pos_dist"])
+    pl_module.log(f"moco_dist_{phase}_txt_txt/txt_txt_neg_dist", ret["text_text_neg_dist"])
+
+    pl_module.log(f"moco_dist_{phase}_txt_img/txt_img_pos_dist", ret["text_image_pos_dist"])
+    pl_module.log(f"moco_dist_{phase}_txt_img/txt_img_neg_dist", ret["text_image_neg_dist"])
     
     return ret
 
