@@ -44,7 +44,6 @@ filter_words = ['a', 'about', 'above', 'across', 'after', 'afterwards', 'again',
                 'your', 'yours', 'yourself', 'yourselves']
 filter_words = set(filter_words)
 
-
 class GreedyAttack_cross_entropy:
     def __init__(self, args,n_candidates,max_loops, tokenizer):
         self.args              = args
@@ -327,7 +326,9 @@ class GreedyAttack_cross_entropy:
             self.words_to_sub_words.append({})
             # Loop for each words of a sentences
             for idx in range(len(words[i])):
-                length = len(self.tokenizer.tokenize(words[i][idx]))               
+                length = len(self.tokenizer.tokenize(words[i][idx])) 
+                if position + length >=  self.max_length : # if Sentence too big
+                    break                 
                 self.words_to_sub_words[i][idx] = np.arange(position, position + length)
                 position += length
 
@@ -457,8 +458,11 @@ class GreedyAttack_cross_entropy:
             
         num_changes = []
         change_rate = []
+        #Problem     = False
         for old_words, new_words in zip(original_words, cur_words):
             changes = sum(~(np.array(old_words) == np.array(new_words)))
+            #if changes ==0 : 
+            #    Problem = True
             num_changes.append(changes)
             change_rate.append(changes / len(old_words))
             
@@ -467,5 +471,6 @@ class GreedyAttack_cross_entropy:
                 'text_masks'    : text_masks ,
                 'text'          : text,
                 'num_changes'   : np.mean(num_changes),
-                'change_rate'   : np.mean(change_rate)}
+                'change_rate'   : np.mean(change_rate),}
+                #'Problem'       : Problem}
     

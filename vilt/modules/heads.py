@@ -16,6 +16,39 @@ class Pooler(nn.Module):
         pooled_output = self.activation(pooled_output)
         return pooled_output
 
+class BarlowTwinsHead(nn.Module):
+    def __init__(self, input_dim, inner_dim, output_dim):
+        super().__init__()
+        layer_dim = [input_dim] + inner_dim + [output_dim]
+        self.projector = nn.Sequential(OrderedDict([
+            ('linear1', nn.Linear(layer_dim[0], layer_dim[1], bias=False)),
+            ('BatchNorm', nn.BatchNorm1d(layer_dim[1])),
+            ('ReLu', nn.ReLU(inplace=True)),
+            ('linear2', nn.Linear(layer_dim[1], layer_dim[2], bias=False)),
+            ('BatchNorm', nn.BatchNorm1d(layer_dim[2])),
+            ('ReLu', nn.ReLU(inplace=True)),
+            ('linear3', nn.Linear(layer_dim[2], layer_dim[3], bias=False)),
+        ]))
+        '''
+        self.txt_projector = nn.Sequential(OrderedDict([
+            ('linear1', nn.Linear(layer_dim[0], layer_dim[1], bias=False)),
+            ('BatchNorm', nn.BatchNorm1d(layer_dim[1])),
+            ('ReLu', nn.ReLU(inplace=True)),
+            ('linear2', nn.Linear(layer_dim[1], layer_dim[2], bias=False)),
+            ('BatchNorm', nn.BatchNorm1d(layer_dim[2])),
+            ('ReLu', nn.ReLU(inplace=True)),
+            ('linear3', nn.Linear(layer_dim[2], layer_dim[3], bias=False)),
+        ]))
+        '''
+        self.norm = nn.BatchNorm1d(layer_dim[-1], affine=False)
+    
+    def forward(self, y1, y2):
+        y1 = y1[:, 0]
+        y2 = y2[:, 0]
+        z1 = self.projector(y1)
+        z2 = self.projector(y2)
+        return self.norm(z1), self.norm(z2)       
+    
 class MOCOHead(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim):
         super().__init__()

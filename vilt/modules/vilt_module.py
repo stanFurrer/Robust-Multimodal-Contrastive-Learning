@@ -1,6 +1,6 @@
 #### New
-from attack.greedy_attack_vilt import GreedyAttack
-from attack.pgd_attack_vilt import PGDAttack
+from attack.greedy_attack_vilt import GreedyAttack_moco, GreedyAttack_barlowtwins
+from attack.pgd_attack_vilt import PGDAttack_moco, PGDAttack_bartlowtwins
 
 import os #
 import time#
@@ -64,7 +64,7 @@ class ViLTransformerSS(pl.LightningModule):
             self.mpp_score.apply(objectives.init_weights)
 
         if config["loss_names"]["moco"] > 0:
-            self.per_step_bs = config["num_gpus"] * config["num_nodes"]
+            self.per_step_bs = config["num_gpus"] * config["num_nodes"] * config["per_gpu_batchsize"]
             self.k_text_embeddings = BertEmbeddings(bert_config)
             self._shadow_layer(self.text_embeddings, self.k_text_embeddings)
             self.k_token_type_embeddings = nn.Embedding(2, config["hidden_size"])
@@ -82,7 +82,6 @@ class ViLTransformerSS(pl.LightningModule):
             self.text_attack = config["text_attack"]
             self.image_attack = config["image_attack"]
             self.num_negative = config["num_negative"]
-            
             self.register_buffer("text_queue", torch.randn(128, self.num_negative))
             self.text_queue = nn.functional.normalize(self.text_queue, dim=0)
             self.register_buffer("text_queue_ptr", torch.zeros(1, dtype=torch.long))
@@ -92,14 +91,24 @@ class ViLTransformerSS(pl.LightningModule):
             
             if self.text_attack:
                 print("----Loading greedy attack ----")
-                self.greedy_attacker = GreedyAttack(config)
+                self.greedy_attacker = GreedyAttack_moco(config)
                 print("----Greedy attack Loaded ----")
             if self.image_attack:
-                self.adv_steps_img = config["adv_steps_img"]
-                self.adv_lr_img = config["adv_lr_img"]
-                self.adv_max_norm_img = config["adv_max_norm_img"]
-                self.pgd_attacker = PGDAttack(config["max_image_len"])            
+                self.pgd_attacker = PGDAttack_moco(config)          
                
+        if config["loss_names"]["barlowtwins"] > 0:
+            self.per_step_bs = config["num_gpus"] * config["num_nodes"] * config["per_gpu_batchsize"]
+            self.barlowtwins_head = heads.BarlowTwinsHead(config["hidden_size"], [8192, 8192], 8192)
+            self.text_attack = config["text_attack"]
+            self.image_attack = config["image_attack"]
+            self.adv_lr = config["adv_lr"]
+            self.loss_weight = 0.001
+            if self.text_attack:
+                print("----Loading greedy attack ----")
+                self.greedy_attacker = GreedyAttack_barlowtwins(config)
+                print("----Greedy attack Loaded ----")
+            if self.image_attack:
+                self.pgd_attacker = PGDAttack_bartlowtwins(config)
         # ===================== Downstream ===================== #
         if (
             self.hparams.config["load_path"] != ""
@@ -208,7 +217,6 @@ class ViLTransformerSS(pl.LightningModule):
         image_embeds=None,
         image_masks=None,
     ):
-
         if f"image_{image_token_type_idx - 1}" in batch:
             imgkey = f"image_{image_token_type_idx - 1}"
         else:
@@ -216,12 +224,12 @@ class ViLTransformerSS(pl.LightningModule):
 
         do_mlm = "_mlm" if mask_text else ""
         text_ids = batch[f"text_ids{do_mlm}"]
-        text_masks = batch[f"text_masks"]   
         text_labels = batch[f"text_labels{do_mlm}"]
+        text_masks = batch[f"text_masks"]
         text_embeds = self.text_embeddings(text_ids)
 
         if image_embeds is None and image_masks is None:
-            img = batch[imgkey][0] # [0] : list of one element
+            img = batch[imgkey][0] # [0] : Because it's a list of one element
             (
                 image_embeds,
                 image_masks,
@@ -229,7 +237,7 @@ class ViLTransformerSS(pl.LightningModule):
                 image_labels,
             ) = self.transformer.visual_embed(
                 img,
-                max_image_len=self.config["max_image_len"],
+                max_image_len=self.hparams.config["max_image_len"],
                 mask_it=mask_image,
             )
         else:
@@ -287,6 +295,10 @@ class ViLTransformerSS(pl.LightningModule):
         image_embeds=None,
         image_masks=None,
     ):
+        # if f"image_{image_token_type_idx - 1}" in batch:
+        #     imgkey = f"image_{image_token_type_idx - 1}"
+        # else:
+        #     imgkey = "image"
         imgkey = "image"
 
         do_mlm = "_mlm" if mask_text else ""
@@ -304,9 +316,14 @@ class ViLTransformerSS(pl.LightningModule):
             image_labels,
         ) = self.k_transformer.visual_embed(
             img,
-            max_image_len=self.config["max_image_len"],
+            max_image_len=self.hparams.config["max_image_len"],
             mask_it=mask_image,
         )
+        # else:
+        #     patch_index, image_labels = (
+        #         None,
+        #         None,
+        #     )
 
         text_embeds, image_embeds = (
             text_embeds + self.k_token_type_embeddings(torch.zeros_like(text_masks)),
@@ -329,17 +346,22 @@ class ViLTransformerSS(pl.LightningModule):
             x[:, : text_embeds.shape[1]],
             x[:, text_embeds.shape[1] :],
         )
+        # cls_feats = self.pooler(x)
 
         ret = {
             "text_feats": text_feats,
             "image_feats": image_feats,
+            # "cls_feats": cls_feats,
+            # "raw_cls_feats": x[:, 0],
+            # "image_labels": image_labels,
             "image_masks": image_masks,
+            # "text_labels": text_labels,
             "text_ids": text_ids,
             "text_masks": text_masks,
             "patch_index": patch_index,
         }
 
-        return ret    
+        return ret
     
     def forward(self, batch):
         ret = dict()
@@ -369,7 +391,7 @@ class ViLTransformerSS(pl.LightningModule):
             
         # Natural Language for Visual Reasoning 2
         if "nlvr2_attacked" in self.current_tasks:
-            ret.update(objectives.compute_nlvr2_attack(self, batch))    
+            ret.update(objectives.compute_nlvr2_attack(self, batch))
 
         # Image Retrieval and Text Retrieval
         if "irtr" in self.current_tasks:
@@ -377,9 +399,13 @@ class ViLTransformerSS(pl.LightningModule):
 
         # MoCo Contrasive framework
         if "moco" in self.current_tasks:
-            ret.update(objectives.compute_moco_contrastive(self,batch))    
-                
+            ret.update(objectives.compute_moco_contrastive(self, batch))
+        
+        if "barlowtwins" in self.current_tasks:
+            ret.update(objectives.compute_barlowtwins_contrastive(self, batch))
+            
         return ret
+
 
     def training_step(self, batch, batch_idx):
         vilt_utils.set_task(self)
