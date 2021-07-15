@@ -292,6 +292,7 @@ class GreedyAttack:
         ori_words = deepcopy(words)             
         all_new_text = []
         all_num = []
+        changed = []
         
         if self.synonym == 'synonym':
             for i in range(batch_size):
@@ -302,9 +303,11 @@ class GreedyAttack:
                         ori_words[i][word_idx[i]] = new_word
                         all_new_text.append(' '.join(ori_words[i]))
                     all_num.append(len(candidates))
+                    changed.append(True)
                 else:
                     all_new_text.append(' '.join(ori_words[i]))
                     all_num.append(1)
+                    changed.append(False)
             return all_new_text, all_num
         
         if self.synonym == 'cos_sim':
@@ -317,11 +320,13 @@ class GreedyAttack:
                         # print(new_word)
                         ori_words[i][word_idx[i]] = new_word
                         all_new_text.append(' '.join(ori_words[i]))
+                    changed.append(True)
                 else : 
                     nbr_candidat = 1 
                     all_new_text.append(' '.join(ori_words[i]))
+                    changed.append(False)
                 all_num.append(nbr_candidat)
-            return all_new_text, all_num
+            return all_new_text, all_num, changed
         raise ValueError("Only use wordnet of cos sim to find new words!")           
     
     def calc_words_to_sub_words(self, words, batch_size):
@@ -464,6 +469,10 @@ class GreedyAttack_moco(GreedyAttack):
         self.build_mini_vilt(pl_module)
         
         self.replace_history = [set() for _ in range(batch_size)]
+        # Test 
+        changes_verification = [0] * batch_size #
+        
+        
         for iter_idx in range(self.max_loops):
             # ori_z    : text_representation
             # vector_z : gradient_projector (project.text.linear2)
@@ -478,10 +487,11 @@ class GreedyAttack_moco(GreedyAttack):
                                                                         k_image=k_image,
                                                                         )
             
-            all_new_text, all_num = self.construct_new_samples(word_idx=replace_idx,
+            all_new_text, all_num,changed = self.construct_new_samples(word_idx=replace_idx,
                                                                words=cur_words,
                                                                batch_size=batch_size)
             
+            print("This is all_num",all_num)
             all_new_false_image_0 = []
             all_new_replica = []
             all_new_raw_index = []
@@ -533,9 +543,13 @@ class GreedyAttack_moco(GreedyAttack):
             
             outputs = self.split_forward(batch_c)
             outputs = torch.split(outputs, all_num)
-            count = 0
+            count   = 0
             
             for i, cur_z in enumerate(outputs):
+                if changed[i] == False : 
+                    count += len(cur_z)
+                    continue
+                    
                 cur_z = cur_z.float() - ori_z[i].float()
                 z = torch.repeat_interleave(vector_z[i].float().unsqueeze(0),
                                             repeats=len(cur_z), dim=0)
@@ -544,7 +558,9 @@ class GreedyAttack_moco(GreedyAttack):
                 cosin_z = self.cosine_similarity(cur_z, z)
                 project_z = torch.mul(cur_z_norm, cosin_z)
                 selected_idx = torch.argmax(project_z)
+                print("This is selected index",selected_idx)
                 if project_z[selected_idx] > 0:
+                    changes_verification[i]+=1 #
                     cur_words[i] = all_new_text[int(selected_idx) + count].split(' ')
                     self.words_to_sub_words[i] = {}
                     position = 0
@@ -554,7 +570,11 @@ class GreedyAttack_moco(GreedyAttack):
                             break                       
                         self.words_to_sub_words[i][idx] = np.arange(position, position + length)
                         position += length
-                            
+                else : 
+                    print("--------------------")
+                    print("This is the index : ",i)
+                    print("This is project_z[selected_idx]",project_z[selected_idx])
+                    print("all_new_text[int(selected_idx) + count].split(' ')",all_new_text[int(selected_idx) + count].split(' '))
                 count += len(cur_z)
             text = [' '.join(x) for x in cur_words]
             txt_input_ids, text_masks = \
@@ -576,7 +596,8 @@ class GreedyAttack_moco(GreedyAttack):
                 'text'          : text,
                 'num_changes'   : np.mean(num_changes),
                 'change_rate'   : np.mean(change_rate),
-                'Problem'       : Problem} 
+                'Problem'       : Problem,
+                'changes_verification'       : changes_verification} 
 
 class GreedyAttack_barlowtwins(GreedyAttack):
     def __init__(self, config):

@@ -107,7 +107,7 @@ def compute_geometric(pl_module, batch, loss_name, k_image=None):
     pl_module.greedy_attacker.adv_attack_samples(pl_module,batch,k_image) 
     
     if attack_words["Problem"]:
-        
+        print("This is changes",attack_words['changes_verification'])
         print("This is the Real versus attacked sentences : ")
         
         for i in range(len(batch["text"])):
