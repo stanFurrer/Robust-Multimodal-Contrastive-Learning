@@ -216,11 +216,11 @@ def task_finetune_nlvr2_randaug_attacked():
     image_attack = False    
     # PGD
     adv_steps_img = 5
-    adv_lr_img = 0.5
+    adv_lr_img = 0.05
     adv_max_norm_img = 0.1
     #Geometric
-    n_candidates = 10
-    max_loops = 10
+    n_candidates = 5
+    max_loops = 2
     sim_thred = 0.5
     cos_sim = True
     synonym = "cos_sim"

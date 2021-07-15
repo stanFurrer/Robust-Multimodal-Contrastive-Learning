@@ -550,11 +550,11 @@ def compute_geometric_finetuning(pl_module, batch,loss_name) :
     attack_words = \
     pl_module.greedy_attacker.adv_attack_samples(pl_module,batch) 
     
-    print("This is the Real versus attacked sentences : ")
+    #print("This is the Real versus attacked sentences : ")
     
-    for i in range(len(batch["text"])):
-        print("Real sentence----: ",real_sentence[i])
-        print("Attacked sentence: ",attack_words["text"][i])
+    #for i in range(len(batch["text"])):
+    #    print("Real sentence----: ",real_sentence[i])
+    #    print("Attacked sentence: ",attack_words["text"][i])
     
     txt_original_attacked   = {"original": real_sentence,
                                "attacked": attack_words["text"]
@@ -602,7 +602,7 @@ def compute_nlvr2_attack(pl_module, batch):
         )
         cls_feats = torch.cat([infer1_a["cls_feats"], infer2_a["cls_feats"]], dim=-1)
         nlvr2_logits_a = pl_module.nlvr2_classifier(cls_feats)
-        nlvr2_loss_a = F.cross_entropy(nlvr2_logits_a, nlvr2_labels)
+        nlvr2_loss_a   = F.cross_entropy(nlvr2_logits_a, nlvr2_labels)
         ## Save img_delta
         save_path ="/itet-stor/sfurrer/net_scratch/UNITER/ViLT/attacks_analysis/PGD"
         if saving %100 == 0 : 
