@@ -1,7 +1,8 @@
-import sys #
+import sys
+import time
 from copy import deepcopy, copy#
-import time#
-import pickle
+
+import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
@@ -17,6 +18,9 @@ from einops import rearrange
 
 from vilt.modules.dist_utils import all_gather
 
+from augmentation.eda import eda
+
+
 def cost_matrix_cosine(x, y, eps=1e-5):
     """Compute cosine distnace across every pairs of x, y (batched)
     [B, L_x, D] [B, L_y, D] -> [B, Lx, Ly]"""
@@ -28,6 +32,7 @@ def cost_matrix_cosine(x, y, eps=1e-5):
     cosine_sim = x_norm.matmul(y_norm.transpose(1, 2))
     cosine_dist = 1 - cosine_sim
     return cosine_dist
+
 
 def trace(x):
     """ compute trace of input tensor (batched) """
@@ -89,6 +94,7 @@ def optimal_transport_dist(
     distance = trace(cost.matmul(T.detach()))
     return distance
 
+
 def compute_pgd(pl_module, batch, loss_name, k_text=None):
     img_delta = pl_module.pgd_attacker.pgd_attack(pl_module, batch, k_text)
     # add debug code here
@@ -96,15 +102,14 @@ def compute_pgd(pl_module, batch, loss_name, k_text=None):
     
     phase = "train" if pl_module.training else "val"
     delta_range = getattr(pl_module, f"{phase}_{loss_name}_delta")(torch.linalg.norm(img_delta, dim=1).mean())
-    pl_module.log(f"{loss_name}/{phase}/delta", delta_range)   
+    pl_module.log(f"{loss_name}/{phase}/delta", delta_range)
     
     return batch
 
 def compute_geometric(pl_module, batch, loss_name, k_image=None):
     
     real_sentence = batch["text"]
-    attack_words = \
-    pl_module.greedy_attacker.adv_attack_samples(pl_module,batch,k_image) 
+    attack_words = pl_module.greedy_attacker.adv_attack_samples(pl_module,batch,k_image) 
     
     if attack_words["Problem"]:
         print("This is changes",attack_words['changes_verification'])
@@ -126,11 +131,20 @@ def compute_geometric(pl_module, batch, loss_name, k_image=None):
     num_changes = getattr(pl_module, f"{phase}_{loss_name}_num_changes")(attack_words["num_changes"])
     change_rate = getattr(pl_module, f"{phase}_{loss_name}_change_rate")(attack_words["change_rate"])
     pl_module.log(f"{loss_name}/{phase}/num_changes", num_changes)
-    pl_module.log(f"{loss_name}/{phase}/change_rate", change_rate)    
+    pl_module.log(f"{loss_name}/{phase}/change_rate", change_rate) 
     
     return batch #, txt_original_attacked
 
 def compute_moco_contrastive(pl_module, batch):
+    # Do Data Augmentation
+    
+    batch_augmented = deepcopy(batch)
+    for i,sentence in enumerate(batch_augmented["text"]) : 
+        print("This is original sentence",sentence)
+        augmented_text = eda(sentence, alpha_sr=0.1, alpha_ri=0.1, alpha_rs=0.1, p_rd=0.1, num_aug=9)
+        print("This is augmented sentence",augmented_text)
+    
+    sys.exit("Congratulation")
     
     def _momentum_update_key_layer(em, q_layer, k_layer):
         """
@@ -381,7 +395,6 @@ def compute_mlm(pl_module, batch):
 
     return ret
 
-
 def compute_mpp(pl_module, batch):
     infer = pl_module.infer(batch, mask_text=False, mask_image=True)
     mpp_logits = pl_module.mpp_score(infer["image_feats"])
@@ -601,6 +614,7 @@ def compute_vqa(pl_module, batch):
 
     return ret
 
+
 def compute_pgd_finetuning(pl_module,batch,loss_name) : 
     img_delta_dict     = {}
     img_init           = {} 
@@ -788,7 +802,6 @@ def compute_nlvr2_attack(pl_module, batch):
     return ret
 
 def compute_nlvr2(pl_module, batch):
-
     infer1 = pl_module.infer(
         batch, mask_text=False, mask_image=False, image_token_type_idx=1
     )
@@ -846,6 +859,7 @@ def compute_nlvr2(pl_module, batch):
             pl_module.log(f"nlvr2/test/accuracy", test_acc)
 
     return ret
+
 
 def compute_irtr(pl_module, batch):
     is_training_phase = pl_module.training
@@ -1024,7 +1038,7 @@ def init_weights(module):
     elif isinstance(module, nn.Sequential):
         for sub_layer in module:
             init_weights(sub_layer)
-            
+
     if isinstance(module, nn.Linear) and module.bias is not None:
         module.bias.data.zero_()
 

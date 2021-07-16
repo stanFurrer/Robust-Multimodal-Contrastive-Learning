@@ -240,7 +240,7 @@ def epoch_wrapup(pl_module):
                 getattr(pl_module, f"{phase}_{loss_name}_wpa_loss").compute(),
             )
             getattr(pl_module, f"{phase}_{loss_name}_wpa_loss").reset()
-
+            
         elif loss_name == "moco" or loss_name == "barlowtwins":
             if pl_module.image_attack:
                 value = getattr(pl_module, f"{phase}_{loss_name}_delta").compute()

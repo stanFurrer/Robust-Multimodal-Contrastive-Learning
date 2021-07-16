@@ -17,10 +17,6 @@ class PGDAttack:
     
     def build_mini_vilt(self, pl_module):
         raise NotImplementedError(f"Build_mini_vilt of {self.contrastive_framework} isn't implemented.")
-    def vilt_zero_grad(self):
-        raise NotImplementedError(f"vilt_zero_grad of {self.contrastive_framework} isn't implemented.")
-    def pgd_attack(self, pl_module, batch, k_text):
-        raise NotImplementedError(f"pgd_attack of {self.contrastive_framework} isn't implemented.")        
     
     def infer(
             self,
@@ -34,9 +30,9 @@ class PGDAttack:
         text_ids = batch[f"text_ids"]
         text_masks = batch[f"text_masks"]
         text_embeds = self.text_embeddings(text_ids)
-    
+        
         if image_embeds is None and image_masks is None:
-            img = batch["image"][0] 
+            img = batch["image"][0]  # [0] : Because it's a list of one element
             (
                 image_embeds,
                 image_masks,
@@ -51,7 +47,10 @@ class PGDAttack:
             patch_index, image_labels = (
                 None,
                 None,
-            ) 
+            )
+        # image_embeds.shape : [64 217 768] :: [batch,patch,hiddensize]
+        # patch_index shape  : ([64 217 2]), (19,19)) (patch_index, (H,W))
+        
         text_embeds, image_embeds = (
             text_embeds + self.token_type_embeddings(torch.zeros_like(text_masks)),
             image_embeds
@@ -59,41 +58,47 @@ class PGDAttack:
                 torch.full_like(image_masks, image_token_type_idx)
             ),
         )
-    
+        
         co_embeds = torch.cat([text_embeds, image_embeds], dim=1)
         co_masks = torch.cat([text_masks, image_masks], dim=1)
-    
+        
         x = co_embeds
-    
+        
         for i, blk in enumerate(self.transformer.blocks):
             x, _attn = blk(x, mask=co_masks)
-    
+        
         x = self.transformer.norm(x)
         text_feats, image_feats = (
             x[:, : text_embeds.shape[1]],
             x[:, text_embeds.shape[1]:],
         )
-    
+        
         ret = {
             "text_feats": text_feats,
             "image_feats": image_feats,
         }
-    
+        
         return ret
+    
+    def vilt_zero_grad(self):
+        raise NotImplementedError(f"vilt_zero_grad of {self.contrastive_framework} isn't implemented.")
+
+    def pgd_attack(self, pl_module, batch, k_text):
+        raise NotImplementedError(f"pgd_attack of {self.contrastive_framework} isn't implemented.")
 
 class PGDAttack_moco(PGDAttack):
     def __init__(self, config):
         super().__init__(config, "moco")
         # a mini ViLTransformerSS
         self.moco_head = None
-    
+
     def build_mini_vilt(self, pl_module):
         self.pl_module = pl_module
         self.text_embeddings = deepcopy(pl_module.text_embeddings)
         self.token_type_embeddings = deepcopy(pl_module.token_type_embeddings)
         self.transformer = deepcopy(pl_module.transformer)
-        self.moco_head = deepcopy(pl_module.moco_head)    
-    
+        self.moco_head = deepcopy(pl_module.moco_head)
+
     def vilt_zero_grad(self):
         self.text_embeddings.zero_grad()
         self.transformer.zero_grad()
@@ -145,6 +150,7 @@ class PGDAttack_moco(PGDAttack):
                 img_delta = torch.clamp(img_delta, -self.adv_max_norm_img, self.adv_max_norm_img).detach()
                 
         return img_delta
+
     
 class PGDAttack_bartlowtwins(PGDAttack):
     def __init__(self, config):
@@ -211,4 +217,4 @@ class PGDAttack_bartlowtwins(PGDAttack):
             if self.adv_max_norm_img > 0:
                 img_delta = torch.clamp(img_delta, -self.adv_max_norm_img, self.adv_max_norm_img).detach()
         
-        return img_delta    
+        return img_delta

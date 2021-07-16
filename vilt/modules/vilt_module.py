@@ -205,8 +205,8 @@ class ViLTransformerSS(pl.LightningModule):
             param_k.data.copy_(param_q.data)
             param_k.requires_grad = False
         
-    def get_input_embeddings(self):
-        return self.text_embeddings.word_embeddings
+    #def get_input_embeddings(self):
+    #    return self.text_embeddings.word_embeddings
     
     def infer(
         self,
@@ -285,7 +285,7 @@ class ViLTransformerSS(pl.LightningModule):
         }
 
         return ret
-
+    
     def infer_k(
         self,
         batch,
@@ -337,6 +337,7 @@ class ViLTransformerSS(pl.LightningModule):
         co_masks = torch.cat([text_masks, image_masks], dim=1)
 
         x = co_embeds
+
 
         for i, blk in enumerate(self.k_transformer.blocks):
             x, _attn = blk(x, mask=co_masks)
@@ -426,7 +427,7 @@ class ViLTransformerSS(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         # For adversarial
-        torch.set_grad_enabled(True)
+        #torch.set_grad_enabled(True)
         vilt_utils.set_task(self)
         output = self(batch)
         ret = dict()

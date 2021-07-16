@@ -108,6 +108,7 @@ class GreedyAttack:
                 if len(candidates) == 0:
                     candidates = [word]
                 self.cos_sim_dict[idx] = candidates
+                
     def build_mini_vilt(self, pl_module):
         raise NotImplementedError(f"Build_mini_vilt of {self.contrastive_framework} isn't implemented.")
         
@@ -171,6 +172,8 @@ class GreedyAttack:
     
         return ret
     
+    def vilt_zero_grad(self):
+        raise NotImplementedError(f"vilt_zero_grad of {self.contrastive_framework} isn't implemented.")    
     
     def get_synonym_by_cos(self, word): 
         if not (word in self.sim_word2id):
@@ -194,12 +197,13 @@ class GreedyAttack:
 
         return list(candidates)[:self.n_candidates]
     
-    def get_important_scores(self,grads, words_to_sub_words):
+    def get_important_scores(self, grads, words_to_sub_words):
         index_scores = [0.0] * len(words_to_sub_words)
+        # print(len(words_to_sub_words), words_to_sub_words)
         for i in range(len(words_to_sub_words)):
+            # print(i, words_to_sub_words[i])
             matched_tokens  = words_to_sub_words[i]
             agg_grad        = np.mean(grads[matched_tokens], axis=0)
-
             index_scores[i] = np.linalg.norm(agg_grad, ord=1)
         return index_scores
        
@@ -224,10 +228,10 @@ class GreedyAttack:
                 device,
                 k_image,
     ):
-        raise NotImplementedError(f"get_grad of {self.contrastive_framework} isn't implemented.")    
+        raise NotImplementedError(f"get_grad of {self.contrastive_framework} isn't implemented.")   
     
 
-    def compute_word_importance  (self, 
+    def compute_word_importance  (self,
                                   words, 
                                   input_ids,
                                   text_masks,
@@ -235,7 +239,7 @@ class GreedyAttack:
                                   batch,
                                   batch_size,
                                   device,
-                                  k_image=None,
+                                  k_image=None
                                  ):
         
         grads_z, grads, text_representation = self.get_grad(input_ids,
@@ -343,6 +347,7 @@ class GreedyAttack:
                     break
                 self.words_to_sub_words[i][idx] = np.arange(position, position + length)
                 position += length
+                
     def split_forward(self,batch):
         """Do a Forward pass to get the text Representation"""
         raise NotImplementedError(f"split_forward of {self.contrastive_framework} isn't implemented.")
@@ -367,13 +372,13 @@ class GreedyAttack_moco(GreedyAttack):
         self.token_type_embeddings = deepcopy(pl_module.token_type_embeddings)
         self.transformer = deepcopy(pl_module.transformer)
         self.moco_head = deepcopy(pl_module.moco_head)
-        
+   
     def vilt_zero_grad(self):
         self.text_embeddings.zero_grad()
         self.transformer.zero_grad()
         self.token_type_embeddings.zero_grad()
-        self.moco_head.zero_grad()        
-        
+        self.moco_head.zero_grad()
+    
     def get_grad(self,
                  input_ids,
                  text_masks,
@@ -383,7 +388,8 @@ class GreedyAttack_moco(GreedyAttack):
                  k_image,
                  ):
         embedding_layer = self.text_embeddings.word_embeddings  # word_embeddings
-        projector_layer = self.moco_head.txt_model.linear2
+        #projector_layer = self.moco_head.txt_model.linear2 ##
+        projector_layer = self.moco_head.model.linear2
         
         original_state_pro = projector_layer.weight.requires_grad
         projector_layer.weight.requires_grad = True
@@ -590,7 +596,7 @@ class GreedyAttack_moco(GreedyAttack):
             num_changes.append(changes)
             change_rate.append(changes / len(old_words))
             
-            
+        print("\n-----------This is the np.mean(num_changes)",np.mean(num_changes))            
         return {'txt_input_ids' : txt_input_ids,
                 'text_masks'    : text_masks ,
                 'text'          : text,
@@ -819,7 +825,8 @@ class GreedyAttack_barlowtwins(GreedyAttack):
                 Problem = True
             num_changes.append(changes)
             change_rate.append(changes / len(old_words))
-            
+                
+
             
         return {'txt_input_ids' : txt_input_ids,
                 'text_masks'    : text_masks ,
