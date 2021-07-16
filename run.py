@@ -12,8 +12,8 @@ from vilt.datamodules.multitask_datamodule import MTDataModule
 def main(_config):
     _config = copy.deepcopy(_config)
 
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
+    # os.environ['MASTER_ADDR'] = 'localhost'
+    # os.environ['MASTER_PORT'] = '12355'
     
     pl.seed_everything(_config["seed"])
 

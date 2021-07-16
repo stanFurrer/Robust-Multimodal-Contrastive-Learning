@@ -106,22 +106,22 @@ def compute_pgd(pl_module, batch, loss_name, k_text=None):
 
 
 def compute_geometric(pl_module, batch, loss_name, k_image=None):
-    # real_sentence = batch["text"]
+    real_sentence = batch["text"]
     attack_words = pl_module.greedy_attacker.adv_attack_samples(pl_module, batch, k_image)
     
-    # print("This is the Real versus attacked sentences : ")
+    print("This is the Real versus attacked sentences : ")
     
-    # for i in range(len(batch["text"])):
-    #     print("Real sentence----: ", real_sentence[i])
-    #     print("Attacked sentence: ", attack_words["text"][i])
+    for i in range(len(batch["text"])):
+        print("Real sentence----: ", real_sentence[i])
+        print("Attacked sentence: ", attack_words["text"][i])
     
     # txt_original_attacked   = {"original": real_sentence,
     #                            "attacked": attack_words["text"]
     #                           }
     batch["text"]          = attack_words["text"]
-    batch["txt_input_ids"] = attack_words["txt_input_ids"]
+    batch["text_ids"] = attack_words["txt_input_ids"]
     batch["text_masks"]    = attack_words["text_masks"]
-    
+
     phase = "train" if pl_module.training else "val"
     pl_module.log(f"{loss_name}_attack/{phase}/num_changes", attack_words["num_changes"])
     pl_module.log(f"{loss_name}_attack/{phase}/change_rate", attack_words["change_rate"])
@@ -190,6 +190,7 @@ def compute_moco_contrastive(pl_module, batch):
         infer = pl_module.infer(attacked_batch, mask_text=False, mask_image=False)
         image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
         q = nn.functional.normalize(image_representation_q, dim=1)
+        original_text = nn.functional.normalize(text_representation_q, dim=1)
 
         # attacked image: close to the same image before attack; away from different images.
         neg_img = pl_module.image_queue.clone().detach()
@@ -238,6 +239,7 @@ def compute_moco_contrastive(pl_module, batch):
         infer = pl_module.infer(attacked_batch, mask_text=False, mask_image=False)
         image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
         q = nn.functional.normalize(text_representation_q, dim=1)
+        original_image = nn.functional.normalize(image_representation_q, dim=1)
 
         # attacked text: close to the same text; away from different text
         neg_txt = pl_module.text_queue.clone().detach()
@@ -292,18 +294,29 @@ def compute_moco_contrastive(pl_module, batch):
     loss = getattr(pl_module, f"{phase}_moco_loss")(ret["moco_loss"])
     pl_module.log(f"moco_loss/step/{phase}", loss)
     
-    pl_module.log(f"moco_dist_{phase}_img_img/img_img_pos_dist", ret["image_image_pos_dist"])
-    pl_module.log(f"moco_dist_{phase}_img_img/img_img_neg_dist", ret["image_image_neg_dist"])
-
-    pl_module.log(f"moco_dist_{phase}_img_txt/img_txt_pos_dist", ret["image_text_pos_dist"])
-    pl_module.log(f"moco_dist_{phase}_img_txt/img_txt_neg_dist", ret["image_text_neg_dist"])
-
-    pl_module.log(f"moco_dist_{phase}_txt_txt/txt_txt_pos_dist", ret["text_text_pos_dist"])
-    pl_module.log(f"moco_dist_{phase}_txt_txt/txt_txt_neg_dist", ret["text_text_neg_dist"])
-
-    pl_module.log(f"moco_dist_{phase}_txt_img/txt_img_pos_dist", ret["text_image_pos_dist"])
-    pl_module.log(f"moco_dist_{phase}_txt_img/txt_img_neg_dist", ret["text_image_neg_dist"])
+    # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    # Here is a bug if (attack_image and attack_text) is False
+    if pl_module.text_attack and pl_module.image_attack:
+        pl_module.log(f"moco_dist_{phase}/img_txt_dist", torch.linalg.norm(original_image - original_text, dim=1).mean())
     
+    if pl_module.image_attack:
+        pl_module.log(f"moco_dist_{phase}_img_img/img_img_pos_dist", ret["image_image_pos_dist"])
+        pl_module.log(f"moco_dist_{phase}_img_img/img_img_neg_dist", ret["image_image_neg_dist"])
+        pl_module.log(f"moco_dist_{phase}_img_img/img_img_difference", ret["image_image_neg_dist"] - ret["image_image_pos_dist"])
+
+        pl_module.log(f"moco_dist_{phase}_img_txt/img_txt_pos_dist", ret["image_text_pos_dist"])
+        pl_module.log(f"moco_dist_{phase}_img_txt/img_txt_neg_dist", ret["image_text_neg_dist"])
+        pl_module.log(f"moco_dist_{phase}_img_txt/img_txt_difference", ret["image_text_neg_dist"] - ret["image_text_pos_dist"])
+
+    if pl_module.text_attack:
+        pl_module.log(f"moco_dist_{phase}_txt_txt/txt_txt_pos_dist", ret["text_text_pos_dist"])
+        pl_module.log(f"moco_dist_{phase}_txt_txt/txt_txt_neg_dist", ret["text_text_neg_dist"])
+        pl_module.log(f"moco_dist_{phase}_txt_txt/txt_txt_difference", ret["text_text_neg_dist"] - ret["text_text_pos_dist"])
+
+        pl_module.log(f"moco_dist_{phase}_txt_img/txt_img_pos_dist", ret["text_image_pos_dist"])
+        pl_module.log(f"moco_dist_{phase}_txt_img/txt_img_neg_dist", ret["text_image_neg_dist"])
+        pl_module.log(f"moco_dist_{phase}_txt_img/txt_img_difference", ret["text_image_neg_dist"] - ret["text_image_pos_dist"])
+
     return ret
 
 
@@ -315,12 +328,17 @@ def compute_barlowtwins_contrastive(pl_module, batch):
     def off_diagonal(x):
         n, m = x.shape
         assert n == m
-        return  x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
+        return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
+
+    infer = pl_module.infer(batch, mask_text=False, mask_image=False)
+    original_image, original_text = pl_module.barlowtwins_head(infer['image_feats'], infer['text_feats'])
     
     if pl_module.image_attack:
         attacked_batch = compute_pgd(pl_module, deepcopy(batch), "barlowtwins")
         infer = pl_module.infer(attacked_batch, mask_text=False, mask_image=False)
         image_representation, text_representation = pl_module.barlowtwins_head(infer['image_feats'], infer['text_feats'])
+        
+        # image, text
         c = image_representation.T @ text_representation
         
         c.div_(pl_module.per_step_bs)
@@ -328,32 +346,77 @@ def compute_barlowtwins_contrastive(pl_module, batch):
         
         on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
         off_diag = off_diagonal(c).pow_(2).sum()
+
+        ret["image_text_dist"] = torch.linalg.norm(image_representation - text_representation, dim=1).mean()
+
+        loss = loss + on_diag + pl_module.adv_lr * off_diag
+        loss_num += 1
+
+        # image, image
+        c = image_representation.T @ original_image
+
+        c.div_(pl_module.per_step_bs)
+        torch.distributed.all_reduce(c)
+
+        on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
+        off_diag = off_diagonal(c).pow_(2).sum()
+
+        ret["image_image_dist"] = torch.linalg.norm(image_representation - original_image, dim=1).mean()
         
-        loss = on_diag + pl_module.adv_lr * off_diag
+        loss = loss + on_diag + pl_module.adv_lr * off_diag
         loss_num += 1
 
     if pl_module.text_attack:
         attacked_batch = compute_geometric(pl_module, deepcopy(batch), "barlowtwins")
         infer = pl_module.infer(attacked_batch, mask_text=False, mask_image=False)
         image_representation, text_representation = pl_module.barlowtwins_head(infer['image_feats'], infer['text_feats'])
-        c = image_representation.T @ text_representation
-    
+        
+        # text, image
+        c = text_representation.T @ image_representation
+        
         c.div_(pl_module.per_step_bs)
         torch.distributed.all_reduce(c)
     
         on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
         off_diag = off_diagonal(c).pow_(2).sum()
-    
-        loss = on_diag + pl_module.adv_lr * off_diag
+
+        ret["text_image_dist"] = torch.linalg.norm(text_representation - image_representation, dim=1).mean()
+        
+        loss = loss + on_diag + pl_module.adv_lr * off_diag
         loss_num += 1
         
-    ret["barlowtwins_loss"] = loss / loss_num * pl_module.loss_weight
+        # text, image
+        c = text_representation.T @ original_text
+        
+        c.div_(pl_module.per_step_bs)
+        torch.distributed.all_reduce(c)
+
+        on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
+        off_diag = off_diagonal(c).pow_(2).sum()
+        
+        ret["text_text_dist"] = torch.linalg.norm(text_representation - original_text, dim=1).mean()
+
+        loss = loss + on_diag + pl_module.adv_lr * off_diag
+        loss_num += 1
+        
+    ret["barlowtwins_loss"] = loss / loss_num  # * pl_module.loss_weight
 
     phase = "train" if pl_module.training else "val"
     loss = getattr(pl_module, f"{phase}_barlowtwins_loss")(ret["barlowtwins_loss"])
     pl_module.log(f"barlowtwins/{phase}/loss", loss)
     
+    pl_module.log(f"barlowtwins_dist_{phase}/original_img_txt_dist", torch.linalg.norm(original_image - original_text, dim=1).mean())
+
+    pl_module.log(f"barlowtwins_dist_{phase}/img_img_dist", ret["image_image_dist"])
+
+    pl_module.log(f"barlowtwins_dist_{phase}/img_txt_dist", ret["image_text_dist"])
+
+    pl_module.log(f"barlowtwins_dist_{phase}/txt_txt_dist", ret["text_text_dist"])
+
+    pl_module.log(f"barlowtwins_dist_{phase}/txt_img_dist", ret["text_image_dist"])
+    
     return ret
+
 
 def compute_mlm(pl_module, batch):
     infer = pl_module.infer(batch, mask_text=True, mask_image=False)

@@ -90,9 +90,9 @@ class ViLTransformerSS(pl.LightningModule):
             self.image_queue = nn.functional.normalize(self.image_queue, dim=0)
             self.register_buffer("image_queue_ptr", torch.zeros(1, dtype=torch.long))
             if self.text_attack:
-                print("----Loading greedy attack ----")
+                print("----Loading MoCo greedy attack ----")
                 self.greedy_attacker = GreedyAttack_moco(config)
-                print("----Greedy attack Loaded ----")
+                print("----MoCo Greedy attack Loaded ----")
             if self.image_attack:
                 self.pgd_attacker = PGDAttack_moco(config)
 
@@ -104,9 +104,9 @@ class ViLTransformerSS(pl.LightningModule):
             self.adv_lr = config["adv_lr"]
             self.loss_weight = 0.001
             if self.text_attack:
-                print("----Loading greedy attack ----")
+                print("----Loading Barlowtwins greedy attack ----")
                 self.greedy_attacker = GreedyAttack_barlowtwins(config)
-                print("----Greedy attack Loaded ----")
+                print("----Barlowtwins Greedy attack Loaded ----")
             if self.image_attack:
                 self.pgd_attacker = PGDAttack_bartlowtwins(config)
             
@@ -249,6 +249,9 @@ class ViLTransformerSS(pl.LightningModule):
         # image_embeds.shape : [64 217 768] :: [batch,patch,hiddensize]
         # patch_index shape  : ([64 217 2]), (19,19)) (patch_index, (H,W))
         
+        # print("infer", text_ids.size())
+        # print("infer", text_embeds.size())
+        # print("infer", text_masks.size())
         text_embeds, image_embeds = (
             text_embeds + self.token_type_embeddings(torch.zeros_like(text_masks)),
             image_embeds

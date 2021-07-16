@@ -60,26 +60,20 @@ class MOCOHead(nn.Module):
         self.output_dim = output_dim
         self.input_dim  = input_dim
         self.hidden_dim = hidden_dim
-        self.img_model  = nn.Sequential(OrderedDict([
-            ('linear1_img', nn.Linear(self.input_dim, self.hidden_dim)),
+        self.model  = nn.Sequential(OrderedDict([
+            ('linear1', nn.Linear(self.input_dim, self.hidden_dim)),
             ('LayerNorm',   nn.LayerNorm(self.hidden_dim)),
             ('LayerNorm',   nn.ReLU()),
-            ('linear2_img', nn.Linear(self.hidden_dim, self.output_dim, bias=False))
-        ]))
-
-        self.txt_model = nn.Sequential(OrderedDict([
-            ('linear1', nn.Linear(self.input_dim, self.hidden_dim)),
-            ('LayerNorm', nn.LayerNorm(self.hidden_dim)),
-            ('relu', nn.ReLU()),
             ('linear2', nn.Linear(self.hidden_dim, self.output_dim, bias=False))
         ]))
 
     def forward(self, img, txt):
         first_image_tensor = img[:, 0]
         first_text_tensor = txt[:, 0]
-        img = self.img_model(first_image_tensor)
-        txt = self.txt_model(first_text_tensor)
+        img = self.model(first_image_tensor)
+        txt = self.model(first_text_tensor)
         return img, txt
+
 
 class ITMHead(nn.Module):
     def __init__(self, hidden_size):

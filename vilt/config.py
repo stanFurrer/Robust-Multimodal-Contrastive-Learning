@@ -118,13 +118,14 @@ def env_dandelin():
 @ex.named_config
 def task_moco():
     exp_name = "moco"
+    num_workers = 4
     # datasets = ["coco", "vg", "sbu", "gcc"]
     datasets = ["coco"]
     num_negative = 65536
     momentum = 0.999
     temperature = 0.07
     text_attack = True
-    image_attack = True
+    image_attack = False
     loss_names = _loss_names({"moco": 1})
     # batch_size = 4096
     batch_size = 128
@@ -133,12 +134,12 @@ def task_moco():
     test_only = False
     # Attacks parameters
     # PGD
-    adv_steps_img = 5
+    adv_steps_img = 3
     adv_lr_img = 0.5
     adv_max_norm_img = 0.1
     #Geometric
     n_candidates = 10
-    max_loops = 10
+    max_loops = 7
     sim_thred = 0.5
     cos_sim = True
     synonym = "cos_sim"
@@ -149,16 +150,17 @@ def task_moco():
 @ex.named_config
 def task_barlowtwins():
     exp_name = "barlowtwins"
+    num_workers = 4
     # datasets = ["coco", "vg", "sbu", "gcc"]
     datasets = ["coco"]
     text_attack = True
-    image_attack = False
+    image_attack = True
     loss_names = _loss_names({"barlowtwins": 1})
     adv_lr = 0.0051
-    batch_size = 256
+    batch_size = 32
     max_epoch = 10
     max_image_len = 200
-    test_only = True
+    test_only = False
     # Attacks parameters
     # PGD
     adv_steps_img = 3
@@ -166,7 +168,7 @@ def task_barlowtwins():
     adv_max_norm_img = 0.1
     # Geometric
     n_candidates = 10
-    max_loops = 10
+    max_loops = 7
     sim_thred = 0.5
     cos_sim = True
     synonym = "cos_sim"
@@ -351,7 +353,11 @@ def task_finetune_irtr_f30k_randaug():
 
 # Named configs for "etc" which are orthogonal to "env" and "task", need to be added at the end
 
-
+@ex.named_config
+def step4k():
+    max_epoch = 2
+    max_steps = 4000
+    
 @ex.named_config
 def step25k():
     max_epoch = 100
