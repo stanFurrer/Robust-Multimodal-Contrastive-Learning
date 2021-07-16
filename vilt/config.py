@@ -2,10 +2,10 @@ from sacred import Experiment
 
 ex = Experiment("ViLT")
 
-
 def _loss_names(d):
     ret = {
         "moco": 0,
+        "barlowtwins": 0,
         "itm": 0,
         "mlm": 0,
         "mpp": 0,
@@ -16,7 +16,6 @@ def _loss_names(d):
     }
     ret.update(d)
     return ret
-
 
 @ex.config
 def config():
@@ -72,6 +71,7 @@ def config():
     image_attack = False
     momentum = 1.0
     temperature = 1.0
+    adv_lr = 0.0051
     
     # attacks
     #PGD
@@ -84,7 +84,7 @@ def config():
     sim_thred = 0.5
     cos_sim = True
     synonym = "cos_sim"
-    embedding_path = './Geometric_attack/counter-fitted-vectors.txt'
+    embedding_path = './attack/counter-fitted-vectors.txt'
     sim_path = 'cos_sim_counter_fitting.npy'
     
     # PL Trainer Setting
@@ -121,14 +121,14 @@ def task_moco():
     num_negative = 65536
     momentum = 0.999
     temperature = 0.07
-    text_attack = False
-    image_attack = True
+    text_attack = True
+    image_attack = False
     loss_names = _loss_names({"moco": 1})
     # batch_size = 4096
-    batch_size = 16
+    batch_size = 128
     max_epoch = 10
     max_image_len = 200
-    test_only = True
+    test_only = False
     # Attacks parameters
     # PGD
     adv_steps_img = 5
@@ -140,9 +140,38 @@ def task_moco():
     sim_thred = 0.5
     cos_sim = True
     synonym = "cos_sim"
-    embedding_path = './Geometric_attack/counter-fitted-vectors.txt'
-    sim_path = 'cos_sim_counter_fitting.npy'
-    
+    embedding_path = './attack/counter-fitted-vectors.txt'
+    sim_path = './attack/cos_sim_counter_fitting.npy'
+
+
+@ex.named_config
+def task_barlowtwins():
+    exp_name = "barlowtwins"
+    # datasets = ["coco", "vg", "sbu", "gcc"]
+    datasets = ["coco"]
+    text_attack = True
+    image_attack = False
+    loss_names = _loss_names({"barlowtwins": 1})
+    adv_lr = 0.0051
+    batch_size = 256
+    max_epoch = 10
+    max_image_len = 200
+    test_only = False
+    # Attacks parameters
+    # PGD
+    adv_steps_img = 3
+    adv_lr_img = 0.5
+    adv_max_norm_img = 0.1
+    # Geometric
+    n_candidates = 10
+    max_loops = 10
+    sim_thred = 0.5
+    cos_sim = True
+    synonym = "cos_sim"
+    embedding_path = './attack/counter-fitted-vectors.txt'
+    sim_path = './attack/cos_sim_counter_fitting.npy'
+
+
 @ex.named_config
 def task_mlm_itm():
     exp_name = "mlm_itm"
@@ -207,7 +236,7 @@ def task_finetune_nlvr2_randaug_attacked():
     datasets = ["nlvr2"]
     train_transform_keys = ["pixelbert_randaug"]
     loss_names = _loss_names({"nlvr2_attacked": 1})
-    batch_size = 128
+    batch_size = 16
     max_epoch = 10
     max_steps = None
     warmup_steps = 0.1
@@ -215,19 +244,19 @@ def task_finetune_nlvr2_randaug_attacked():
     learning_rate = 1e-4
     # Attacks parameters
     text_attack = True
-    image_attack = False    
+    image_attack = False
     # PGD
     adv_steps_img = 5
-    adv_lr_img = 0.5
-    adv_max_norm_img = 0.1
+    adv_lr_img = 0.7
+    adv_max_norm_img = 0.2
     #Geometric
     n_candidates = 10
     max_loops = 10
     sim_thred = 0.5
     cos_sim = True
     synonym = "cos_sim"
-    embedding_path = './Geometric_attack/counter-fitted-vectors.txt'
-    sim_path = 'cos_sim_counter_fitting.npy'       
+    embedding_path = './attack/counter-fitted-vectors.txt'
+    sim_path = './attack/cos_sim_counter_fitting.npy'
     
 @ex.named_config
 def task_finetune_vqa():
@@ -352,3 +381,4 @@ def vit32_base():
     hidden_size = 768
     num_heads = 12
     num_layers = 12
+

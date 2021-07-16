@@ -23,4 +23,13 @@ Geometric_attack/greedy_attack_cl_RMCL_print.py
 Geometric_attack/greedy_attack_with_comment.py
 evaluation.py
 models_weight/
-
+README.md
+TRAIN.md
+EVAL.md
+DATA.md
+IMG_ATTACK_NLVR2.sh
+SLURM/
+TXT_ATTACK_NLVR2.sh
+attacks_analysis/
+old_code.py
+vilt/modules/vilt_module_correct.py

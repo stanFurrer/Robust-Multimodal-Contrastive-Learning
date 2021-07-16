@@ -1,6 +1,7 @@
 import sys #
 from copy import deepcopy, copy#
 import time#
+import pickle
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
@@ -16,82 +17,6 @@ from einops import rearrange
 
 from vilt.modules.dist_utils import all_gather
 
-def infer(batch,
-        img_delta=None,
-        attack_words=None,
-        mask_text=False,
-        mask_image=False,
-        image_token_type_idx=1,
-        image_embeds=None,
-        image_masks=None,
-          ):    
-    if f"image_{image_token_type_idx - 1}" in batch:
-        imgkey = f"image_{image_token_type_idx - 1}"
-    else:
-        imgkey = "image"
-
-    do_mlm = "_mlm" if mask_text else ""
-    if attack_words is None : 
-        text_ids = batch[f"text_ids{do_mlm}"]
-        text_masks = batch[f"text_masks"]
-    else :
-        text_ids = attack_words["txt_input_ids"]
-        text_masks = attack_words["text_masks"]     
-    text_labels = batch[f"text_labels{do_mlm}"]
-    text_embeds = text_embeddings_shadow(text_ids)
-
-    if image_embeds is None and image_masks is None:
-        if img_delta is None: 
-            img = batch[imgkey][0] # [0] : list of one element
-        else :
-            img = batch[imgkey][0] + img_delta
-        (
-            image_embeds,
-            image_masks,
-            patch_index,
-            image_labels,
-        ) = transformer_shadow.visual_embed(
-            img,
-            max_image_len=max_image_len,
-            mask_it=mask_image,
-        )
-    else:
-        patch_index, image_labels = (
-            None,
-            None,
-        )
-    # image_embeds.shape : [64 217 768] :: [batch,patch,hiddensize]
-    # patch_index shape  : ([64 217 2]), (19,19)) (patch_index, (H,W))
-
-    text_embeds, image_embeds = (
-        text_embeds + token_type_embeddings_shadow(torch.zeros_like(text_masks)),
-        image_embeds
-        + token_type_embeddings_shadow(
-            torch.full_like(image_masks, image_token_type_idx)
-        ),
-    )
-
-    co_embeds = torch.cat([text_embeds, image_embeds], dim=1)
-    co_masks = torch.cat([text_masks, image_masks], dim=1)
-
-    x = co_embeds
-
-    for i, blk in enumerate(transformer_shadow.blocks):
-        x, _attn = blk(x, mask=co_masks)
-
-    x = transformer_shadow.norm(x)
-    text_feats, image_feats = (
-        x[:, : text_embeds.shape[1]],
-        x[:, text_embeds.shape[1] :],
-    )
-
-    ret = {
-        "text_feats": text_feats,
-        "image_feats": image_feats,
-    }
-    return ret 
-
-
 def cost_matrix_cosine(x, y, eps=1e-5):
     """Compute cosine distnace across every pairs of x, y (batched)
     [B, L_x, D] [B, L_y, D] -> [B, Lx, Ly]"""
@@ -103,7 +28,6 @@ def cost_matrix_cosine(x, y, eps=1e-5):
     cosine_sim = x_norm.matmul(y_norm.transpose(1, 2))
     cosine_dist = 1 - cosine_sim
     return cosine_dist
-
 
 def trace(x):
     """ compute trace of input tensor (batched) """
@@ -165,64 +89,49 @@ def optimal_transport_dist(
     distance = trace(cost.matmul(T.detach()))
     return distance
 
-def compute_pgd(pl_module,queue,batch,k_text) : 
-
-    loss_fct = nn.CrossEntropyLoss()
-    img_init = batch['image'][0]
-    img_delta = torch.zeros_like(img_init)
+def compute_pgd(pl_module, batch, loss_name, k_text=None):
+    img_delta = pl_module.pgd_attacker.pgd_attack(pl_module, batch, k_text)
+    # add debug code here
+    batch["image"][0] = batch["image"][0] + img_delta
     
-    for astep in range(pl_module.adv_steps_img):   
-        img_delta.requires_grad_(True)                
+    phase = "train" if pl_module.training else "val"
+    delta_range = getattr(pl_module, f"{phase}_{loss_name}_delta")(torch.linalg.norm(img_delta, dim=1).mean())
+    pl_module.log(f"{loss_name}/{phase}/delta", delta_range)   
+    
+    return batch
 
-        infer = pl_module.infer(batch,img_delta=img_delta)
-        image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
-        q_attacked = nn.functional.normalize(image_representation_q, dim=1)
-        
-        # RMCL Loss
-        l_pos = torch.einsum('nc,nc->n', [q_attacked, k_text]).unsqueeze(-1)
-        l_neg = torch.einsum('nc,ck->nk', [q_attacked,queue])
-        logits = torch.cat([l_pos, l_neg], dim=1)
-        logits /= pl_module.temperature
-        labels = torch.zeros(logits.shape[0], dtype=torch.long)
-        labels = labels.type_as(logits)
-        loss   = loss_fct(logits.float(), labels.long())
-        loss.backward()#retain_graph=True)
-        img_delta_grad = img_delta.grad.clone().detach().float()
-        # Get inf_norm gradient (It will be used to normalize the img_delta_grad)
-        denorm = torch.norm(img_delta_grad.view(img_delta_grad.size(0), -1), dim=1, p=float("inf")).view(-1, 1, 1,1)
-        # Clip gradient to Lower Bound
-        denorm = torch.clamp(denorm, min=1e-8)
-        img_delta_step = (pl_module.adv_lr_img * img_delta_grad / denorm).to(img_delta)
-        img_delta = (img_delta + img_delta_step).detach()
-
-        if pl_module.adv_max_norm_img > 0:
-            img_delta = torch.clamp(img_delta, -pl_module.adv_max_norm_img, pl_module.adv_max_norm_img).detach()                      
-    return img_delta
-
-
-def compute_geometric(pl_module,pl_module_shadow,queue, batch,k_image) : 
+def compute_geometric(pl_module, batch, loss_name, k_image=None):
     
     real_sentence = batch["text"]
     attack_words = \
-    pl_module.greedy_attacker.adv_attack_samples(pl_module_shadow,batch,queue,k_image) 
+    pl_module.greedy_attacker.adv_attack_samples(pl_module,batch,k_image) 
     
-    print("This is the Real versus attacked sentences : ")
-    
-    for i in range(len(batch["text"])):
-        print("Real sentence----: ",real_sentence["text"][i])
-        print("Attacked sentence: ",attack_words["text"][i])
-    
-    txt_original_attacked   = {"original": real_sentence["text"],
-                               "attacked": attack_words["text"]
-                              }
+    if attack_words["Problem"]:
+        print("This is changes",attack_words['changes_verification'])
+        print("This is the Real versus attacked sentences : ")
+        
+        for i in range(len(batch["text"])):
+            print("Real sentence----: ",real_sentence[i])
+            print("Attacked sentence: ",attack_words["text"][i])
+
+        txt_original_attacked   = {"original": real_sentence,
+                                   "attacked": attack_words["text"]
+                                  }
+        
     batch["text"]          = attack_words["text"]
-    batch["txt_input_ids"] = attack_words["txt_input_ids"]
+    batch["txt_input"]     = attack_words["txt_input_ids"]
     batch["text_masks"]    = attack_words["text_masks"]
 
+    phase = "train" if pl_module.training else "val"
+    num_changes = getattr(pl_module, f"{phase}_{loss_name}_num_changes")(attack_words["num_changes"])
+    change_rate = getattr(pl_module, f"{phase}_{loss_name}_change_rate")(attack_words["change_rate"])
+    pl_module.log(f"{loss_name}/{phase}/num_changes", num_changes)
+    pl_module.log(f"{loss_name}/{phase}/change_rate", change_rate)    
+    
     return batch #, txt_original_attacked
 
-def compute_moco_contrastive(pl_module,pl_module_shadow, batch):
-#def compute_moco_contrastive(pl_module, batch):    
+def compute_moco_contrastive(pl_module, batch):
+    
     def _momentum_update_key_layer(em, q_layer, k_layer):
         """
         Momentum update of the key encoder
@@ -245,26 +154,25 @@ def compute_moco_contrastive(pl_module,pl_module_shadow, batch):
         """ dequeue and euqueue the new batch of text AND image representation"""
         keys = _concat_all_gather(keys)
         batch_size = keys.shape[0]
-        if pl_module.num_negative % batch_size != 0:
+        if not (pl_module.per_step_bs == batch_size):
             return
         if queue_type == 'text':
             ptr = int(pl_module.text_queue_ptr)
-            assert pl_module.num_negative % batch_size == 0
+            # assert pl_module.num_negative % batch_size == 0
             pl_module.text_queue[:, ptr:ptr+batch_size] = keys.T
             ptr = (ptr + batch_size) % pl_module.num_negative
             pl_module.text_queue_ptr[0] = ptr
         if queue_type == 'image':
             ptr = int(pl_module.image_queue_ptr)
-            assert pl_module.num_negative % batch_size == 0
+            # assert pl_module.num_negative % batch_size == 0
             pl_module.image_queue[:, ptr:ptr + batch_size] = keys.T
             ptr = (ptr + batch_size) % pl_module.num_negative
             pl_module.image_queue_ptr[0] = ptr
 
     loss = 0
+    loss_num = 0
     loss_fct = nn.CrossEntropyLoss()
     ret = {}
-    img_delta = None
-    phase = "train" if pl_module.training else "val"
 
     # momentum update key encoder
     _momentum_update_key_layer(pl_module.momentum, pl_module.text_embeddings, pl_module.k_text_embeddings)
@@ -273,64 +181,175 @@ def compute_moco_contrastive(pl_module,pl_module_shadow, batch):
     _momentum_update_key_layer(pl_module.momentum, pl_module.moco_head, pl_module.k_moco_head)
 
     with torch.no_grad():
-        
         infer_k = pl_module.infer_k(batch, mask_text=False, mask_image=False)
         image_representation_k, text_representation_k = pl_module.k_moco_head(infer_k['image_feats'], infer_k['text_feats'])
         k_text = nn.functional.normalize(text_representation_k, dim=1)
         k_image = nn.functional.normalize(image_representation_k, dim=1)
-      
+
     if pl_module.image_attack:
-        image_queue = pl_module.image_queue.clone().detach()
-        #img_delta = compute_pgd(pl_module,image_queue,batch,k_text)
-        img_delta = compute_pgd(pl_module_shadow,image_queue,batch,k_text)
-        infer = pl_module.infer(batch, img_delta = img_delta ,mask_text=False, mask_image=False)
+        attacked_batch = compute_pgd(pl_module, deepcopy(batch), "moco", k_text)
+        infer = pl_module.infer(attacked_batch, mask_text=False, mask_image=False)
         image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
         q = nn.functional.normalize(image_representation_q, dim=1)
-        l_pos = torch.einsum('nc,nc->n', [q, k_text]).unsqueeze(-1)
-        l_neg = torch.einsum('nc,ck->nk', [q, image_queue])
+
+        # attacked image: close to the same image before attack; away from different images.
+        neg_img = pl_module.image_queue.clone().detach()
+        l_pos = torch.einsum('nc,nc->n', [q, k_image]).unsqueeze(-1)
+        l_neg = torch.einsum('nc,ck->nk', [q, neg_img])
         logits = torch.cat([l_pos, l_neg], dim=1)
         logits /= pl_module.temperature
     
         labels = torch.zeros(logits.shape[0], dtype=torch.long)
         labels = labels.type_as(logits)
 
-        ret["image_logits"] = logits
-        ret["image_labels"] = labels
-        acc = getattr(pl_module, f"{phase}_moco_img_accuracy")(
-            ret["image_logits"], ret["image_labels"]
-        )
+        ret["image_image_pos_dist"] = torch.linalg.norm(q-k_image, dim=1).mean()
+        dist = 0
+        for sub_q in q:
+            dist += torch.linalg.norm(sub_q-neg_img.T, dim=1).mean()
+        ret["image_image_neg_dist"] = dist / q.shape[0]
+        # ret["image_image_logits"] = logits
+        # ret["image_image_labels"] = labels
 
         loss = loss + loss_fct(logits.float(), labels.long())
+        loss_num += 1
+        
+        # attacked image: close to the corresponding text; away from other text
+        neg_txt = pl_module.text_queue.clone().detach()
+        l_pos = torch.einsum('nc,nc->n', [q, k_text]).unsqueeze(-1)
+        l_neg = torch.einsum('nc,ck->nk', [q, neg_txt])
+        logits = torch.cat([l_pos, l_neg], dim=1)
+        logits /= pl_module.temperature
 
-        _dequeue_and_enqueue(k_image, 'image')
+        labels = torch.zeros(logits.shape[0], dtype=torch.long)
+        labels = labels.type_as(logits)
+        
+        ret["image_text_pos_dist"] = torch.linalg.norm(q - k_text, dim=1).mean()
+        dist = 0
+        for sub_q in q:
+            dist += torch.linalg.norm(sub_q - neg_txt.T, dim=1).mean()
+        ret["image_text_neg_dist"] = dist / q.shape[0]
+        # ret["image_text_logits"] = logits
+        # ret["image_text_labels"] = labels
+
+        loss = loss + loss_fct(logits.float(), labels.long())
+        loss_num += 1
 
     if pl_module.text_attack:
-        text_queue = pl_module.text_queue.clone().detach()
-        batch = compute_geometric(pl_module,pl_module_shadow,text_queue,batch,k_image)
-        infer = pl_module.infer(batch,img_delta = img_delta, mask_text=False, mask_image=False)
+        attacked_batch = compute_geometric(pl_module, deepcopy(batch), "moco", k_image)
+        infer = pl_module.infer(attacked_batch, mask_text=False, mask_image=False)
         image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
         q = nn.functional.normalize(text_representation_q, dim=1)
-        l_pos = torch.einsum('nc,nc->n', [q, k_image]).unsqueeze(-1)
-        l_neg = torch.einsum('nc,ck->nk', [q, text_queue])
+
+        # attacked text: close to the same text; away from different text
+        neg_txt = pl_module.text_queue.clone().detach()
+        l_pos = torch.einsum('nc,nc->n', [q, k_text]).unsqueeze(-1)
+        l_neg = torch.einsum('nc,ck->nk', [q, neg_txt])
         logits = torch.cat([l_pos, l_neg], dim=1)
         logits /= pl_module.temperature
     
         labels = torch.zeros(logits.shape[0], dtype=torch.long)
         labels = labels.type_as(logits)
+        
+        ret["text_text_pos_dist"] = torch.linalg.norm(q - k_text, dim=1).mean()
+        dist = 0
+        for sub_q in q:
+            dist += torch.linalg.norm(sub_q - neg_txt.T, dim=1).mean()
+        ret["text_text_neg_dist"] = dist / q.shape[0]
+        # ret["text_text_logits"] = logits
+        # ret["text_text_labels"] = labels
 
-        ret["text_logits"] = logits
-        ret["text_labels"] = labels
-        acc = getattr(pl_module, f"{phase}_moco_txt_accuracy")(
-            ret["text_logits"], ret["text_labels"]
-        )
-        
         loss = loss + loss_fct(logits.float(), labels.long())
+        loss_num += 1
+
+        # attacked text: close to the corresponding image, away from other images
+        neg_img = pl_module.image_queue.clone().detach()
+        l_pos = torch.einsum('nc,nc->n', [q, k_image]).unsqueeze(-1)
+        l_neg = torch.einsum('nc,ck->nk', [q, neg_img])
+        logits = torch.cat([l_pos, l_neg], dim=1)
+        logits /= pl_module.temperature
+
+        labels = torch.zeros(logits.shape[0], dtype=torch.long)
+        labels = labels.type_as(logits)
         
-        _dequeue_and_enqueue(k_text, 'text')
-               
-    print("\n\n BATCH DONE \n\n")
-    ret["moco_loss"] = loss
+        ret["text_image_pos_dist"] = torch.linalg.norm(q - k_image, dim=1).mean()
+        dist = 0
+        for sub_q in q:
+            dist += torch.linalg.norm(sub_q - neg_img.T, dim=1).mean()
+        ret["text_image_neg_dist"] = dist / q.shape[0]
+        # ret["text_image_pos_dist"] = torch.linalg.norm(q-k_image).mean()
+        # ret["text_image_neg_dist"] = torch.linalg.norm(q-neg_img, dim=1).mean()
+        # ret["text_image_logits"] = logits
+        # ret["text_image_labels"] = labels
+
+        loss = loss + loss_fct(logits.float(), labels.long())
+        loss_num += 1
+
+    _dequeue_and_enqueue(k_text, 'text')
+    _dequeue_and_enqueue(k_image, 'image')
+
+    ret["moco_loss"] = loss / loss_num
+    
+    phase = "train" if pl_module.training else "val"
     loss = getattr(pl_module, f"{phase}_moco_loss")(ret["moco_loss"])
+    pl_module.log(f"moco/{phase}/loss", loss)
+    if pl_module.image_attack:    
+        img_img_dist = getattr(pl_module, f"{phase}_moco_img_img_dist")(ret["image_image_neg_dist"] - ret["image_image_pos_dist"])
+        pl_module.log(f"moco/{phase}/img_img_dist", img_img_dist)
+        img_txt_dist = getattr(pl_module, f"{phase}_moco_img_txt_dist")(ret["image_text_neg_dist"] - ret["image_text_pos_dist"])
+        pl_module.log(f"moco/{phase}/img_txt_dist", img_txt_dist)
+    if pl_module.text_attack:
+        txt_txt_dist = getattr(pl_module, f"{phase}_moco_txt_txt_dist")(ret["text_text_neg_dist"] - ret["text_text_pos_dist"])
+        pl_module.log(f"moco/{phase}/txt_txt_dist", txt_txt_dist)
+        txt_img_dist = getattr(pl_module, f"{phase}_moco_txt_img_dist")(ret["text_image_neg_dist"] - ret["text_image_pos_dist"])
+        pl_module.log(f"moco/{phase}/txt_img_dist", txt_img_dist)
+    
+    return ret
+
+def compute_barlowtwins_contrastive(pl_module, batch):
+    loss = 0
+    loss_num = 0
+    ret = {}
+    
+    def off_diagonal(x):
+        n, m = x.shape
+        assert n == m
+        return  x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
+    
+    if pl_module.image_attack:
+        attacked_batch = compute_pgd(pl_module, deepcopy(batch), "barlowtwins")
+        infer = pl_module.infer(attacked_batch, mask_text=False, mask_image=False)
+        image_representation, text_representation = pl_module.barlowtwins_head(infer['image_feats'], infer['text_feats'])
+        c = image_representation.T @ text_representation
+        
+        c.div_(pl_module.per_step_bs)
+        torch.distributed.all_reduce(c)
+        
+        on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
+        off_diag = off_diagonal(c).pow_(2).sum()
+        
+        loss = on_diag + pl_module.adv_lr * off_diag
+        loss_num += 1
+
+    if pl_module.text_attack:
+        attacked_batch = compute_geometric(pl_module, deepcopy(batch), "barlowtwins")
+        infer = pl_module.infer(attacked_batch, mask_text=False, mask_image=False)
+        image_representation, text_representation = pl_module.barlowtwins_head(infer['image_feats'], infer['text_feats'])
+        c = image_representation.T @ text_representation
+    
+        c.div_(pl_module.per_step_bs)
+        torch.distributed.all_reduce(c)
+    
+        on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
+        off_diag = off_diagonal(c).pow_(2).sum()
+    
+        loss = on_diag + pl_module.adv_lr * off_diag
+        loss_num += 1
+        
+    ret["barlowtwins_loss"] = loss / loss_num * pl_module.loss_weight
+
+    phase = "train" if pl_module.training else "val"
+    loss = getattr(pl_module, f"{phase}_barlowtwins_loss")(ret["barlowtwins_loss"])
+    pl_module.log(f"barlowtwins/{phase}/loss", loss)
     
     return ret
 
@@ -582,27 +601,24 @@ def compute_vqa(pl_module, batch):
 
     return ret
 
-def compute_pgd_finetuning(pl_module,batch) : 
+def compute_pgd_finetuning(pl_module,batch,loss_name) : 
+    img_delta_dict     = {}
+    img_init           = {} 
     for i in range(2) : 
-        img_init = batch['image_{}'.format(i)][0]
-        img_delta = torch.zeros_like(img_init)
+        img_init['image_{}'.format(i)] = batch['image_{}'.format(i)][0]
+        if i == 1 : 
+            # Attack both image indepedently
+            batch['image_0'][0] = img_init['image_0']
+        img_delta = torch.zeros_like(img_init['image_{}'.format(i)])
         for astep in range(pl_module.adv_steps_img):                
             img_delta.requires_grad_(True)                
-            if i == 0 :  
-                img_delta1 = img_delta
-                infer1 = pl_module.infer(
-                    batch, img_delta = img_delta1,  
-                    mask_text=False, mask_image=False, image_token_type_idx=1)
-                infer2 = pl_module.infer(
-                    batch, mask_text=False, mask_image=False, image_token_type_idx=2)
-            else :
-                img_delta2 = img_delta
-                infer1 = pl_module.infer(
-                    batch, mask_text=False, mask_image=False, image_token_type_idx=1)
-                infer2 = pl_module.infer(
-                    batch, img_delta = img_delta2, 
-                    mask_text=False, mask_image=False, image_token_type_idx=2)
-            
+            batch['image_{}'.format(i)][0] = img_delta + img_init['image_{}'.format(i)]
+
+            infer1 = pl_module.infer(
+                batch,mask_text=False, mask_image=False, image_token_type_idx=1)
+            infer2 = pl_module.infer(
+                batch, mask_text=False, mask_image=False, image_token_type_idx=2)
+  
             cls_feats = torch.cat([infer1["cls_feats"], infer2["cls_feats"]], dim=-1)
             nlvr2_logits = pl_module.nlvr2_classifier(cls_feats)
 
@@ -621,42 +637,53 @@ def compute_pgd_finetuning(pl_module,batch) :
             if pl_module.adv_max_norm_img > 0:
                 img_delta = torch.clamp(img_delta, -pl_module.adv_max_norm_img, 
                                         pl_module.adv_max_norm_img).detach()           
-    return img_delta1, img_delta2    
+        if i == 0 : 
+            img_delta_0 = img_delta
+        # Get imgdelta on CPU for analysis purposes 
+        img_delta_cpu = img_delta.cpu()
+        img_delta_dict['image_{}'.format(i)] = img_delta_cpu
+    
+    batch['image_0'][0] = img_init["image_0"] + img_delta_0        
+    batch['image_1'][0] = img_init["image_1"] + img_delta
 
-def compute_geometric_finetuning(pl_module, batch) : 
+    phase = "train" if pl_module.training else "test"
+    delta_range = getattr(pl_module, f"{phase}_{loss_name}_delta")(torch.linalg.norm(img_delta, dim=1).mean())
+    pl_module.log(f"{loss_name}/{phase}/delta", delta_range)
+    return batch,img_delta_dict    
+
+def compute_geometric_finetuning(pl_module, batch,loss_name) : 
     
     real_sentence = batch["text"]
     attack_words = \
     pl_module.greedy_attacker.adv_attack_samples(pl_module,batch) 
     
-    print("This is the Real versus attacked sentences : ")
-    
-    for i in range(len(batch["text"])):
-        print("Real sentence----: ",real_sentence[i])
-        print("Attacked sentence: ",attack_words["text"][i])
-    
-    txt_original_attacked   = {"original": real_sentence["text"],
-                               "attacked": attack_words["text"]
-                              }
-    # Compute replace_rate
-    #n_changed = [] 
-    #lenght    = [] 
-    #for i in batch["text"].size(0) : 
-    #    length.append(len(txt_original_attacked["original"][i]))
-    #    for j in len(txt_original_attacked["original"][i]):
-    #        n_word_changed = 0
-    #        if txt_original_attacked["original"][i][j].lower() != txt_original_attacked["attacked"][i][j].lower() :
-    #            n_word_changed +=1
-    #    n_changed.append(n_word_changed)
-    
-    #replace_rate = n_changed/lenght
-    #print("This is the replace_rate",replace_rate)
-    #sys.exit("STOP STOP")
-    return attack_words 
+    #if attack_words["Problem"] == True : 
+    #    print("This is the Real versus attacked sentences : ")
 
+    #    for i in range(len(batch["text"])):
+    #        print("Real sentence----: ",real_sentence[i])
+    #        print("Attacked sentence: ",attack_words["text"][i])
+    
+    txt_original_attacked   = {"original": real_sentence,
+                               "attacked": attack_words["text"]
+                                }
+    
+    batch["text"]          = attack_words["text"]
+    batch["txt_input_ids"] = attack_words["txt_input_ids"]
+    batch["text_masks"]    = attack_words["text_masks"]
+
+    phase = "train" if pl_module.training else "test"
+    num_changes = getattr(pl_module, f"{phase}_{loss_name}_num_changes")(attack_words["num_changes"])
+    change_rate = getattr(pl_module, f"{phase}_{loss_name}_change_rate")(attack_words["change_rate"])
+    pl_module.log(f"{loss_name}/{phase}/num_changes", num_changes)
+    pl_module.log(f"{loss_name}/{phase}/change_rate", change_rate)    
+    
+    return batch,txt_original_attacked
+
+saving = 99
 def compute_nlvr2_attack(pl_module, batch):
-    img_delta1 = None
-    img_delta2 = None
+    global saving
+    saving +=1
     nlvr2_labels = batch["answers"]
     nlvr2_labels = torch.tensor(nlvr2_labels).to(pl_module.device).long()
     
@@ -666,48 +693,50 @@ def compute_nlvr2_attack(pl_module, batch):
     infer2 = pl_module.infer(
         batch,mask_text=False, mask_image=False, image_token_type_idx=2
     )
-    # NlVR2 output
-    cls_feats = torch.cat([infer1["cls_feats"], infer2["cls_feats"]], dim=-1)
+    # NlVR2 output clean
+    cls_feats    = torch.cat([infer1["cls_feats"], infer2["cls_feats"]], dim=-1)
     nlvr2_logits = pl_module.nlvr2_classifier(cls_feats)        
-    # Compute the cross-entropy
-    nlvr2_loss   = F.cross_entropy(nlvr2_logits, nlvr2_labels)
     
     if pl_module.image_attack : 
-        img_delta1, img_delta2 = compute_pgd_finetuning(pl_module,batch)    
+        
+        batch_attacked,img_delta_dict = \
+            compute_pgd_finetuning(pl_module,deepcopy(batch),"nlvr2_attacked")    
         
         infer1_a = pl_module.infer(
-            batch,img_delta = img_delta1 ,
-            mask_text=False, mask_image=False, 
-            image_token_type_idx=1
+            batch_attacked,mask_text=False, mask_image=False,image_token_type_idx=1
         )
         infer2_a = pl_module.infer(
-            batch,img_delta = img_delta2, 
-            mask_text=False, mask_image=False, 
-            image_token_type_idx=2
+            batch_attacked,mask_text=False, mask_image=False,image_token_type_idx=2
         )
         cls_feats = torch.cat([infer1_a["cls_feats"], infer2_a["cls_feats"]], dim=-1)
         nlvr2_logits_a = pl_module.nlvr2_classifier(cls_feats)
-        nlvr2_loss_a = F.cross_entropy(nlvr2_logits_a, nlvr2_labels)
-    
+        nlvr2_loss_a   = F.cross_entropy(nlvr2_logits_a, nlvr2_labels)
+        ## Save img_delta
+        save_path ="/itet-stor/sfurrer/net_scratch/UNITER/ViLT/attacks_analysis/PGD"
+        if saving %100 == 0 : 
+            with open(os.path.join(save_path,'img_delta_dict{}_max_norm_{}_lr_{}.pkl'\
+                .format(saving,pl_module.adv_max_norm_img,pl_module.adv_lr_img)), 'wb') as fp:
+                        pickle.dump(img_delta_dict, fp, protocol=pickle.HIGHEST_PROTOCOL)      
     if pl_module.text_attack : 
-        attack_words =  compute_geometric_finetuning(pl_module, batch)
+        
+        batch_attacked,txt_original_attacked = \
+        compute_geometric_finetuning(pl_module, deepcopy(batch),"nlvr2_attacked")
         
         infer1_a = pl_module.infer(
-            batch,img_delta = img_delta1,
-            attack_words = attack_words, 
-            mask_text=False, mask_image=False, 
-            image_token_type_idx=1
+            batch_attacked,mask_text=False, mask_image=False,image_token_type_idx=1
         )
         infer2_a = pl_module.infer(
-            batch,img_delta = img_delta2,
-            attack_words = attack_words, 
-            mask_text=False, mask_image=False, 
-            image_token_type_idx=2
+            batch_attacked,mask_text=False, mask_image=False,image_token_type_idx=2
         )
         cls_feats = torch.cat([infer1_a["cls_feats"], infer2_a["cls_feats"]], dim=-1)
         nlvr2_logits_a = pl_module.nlvr2_classifier(cls_feats)
         nlvr2_loss_a = F.cross_entropy(nlvr2_logits_a, nlvr2_labels)    
-    
+        ## Save txt_original_attacked
+        save_path ="/itet-stor/sfurrer/net_scratch/UNITER/ViLT/attacks_analysis/Geom"
+        if saving %100 == 0 : 
+            with open(os.path.join(save_path,'txt_original_attacked{}_candidate_{}_loop_{}.pkl'\
+                .format(saving,pl_module.n_candidates,pl_module.max_loops)), 'wb') as fp:
+                        pickle.dump(txt_original_attacked, fp, protocol=pickle.HIGHEST_PROTOCOL)     
     ret = {
         "nlvr2_attacked_loss": nlvr2_loss_a,
         "nlvr2_attacked_logits": nlvr2_logits_a,
@@ -715,8 +744,7 @@ def compute_nlvr2_attack(pl_module, batch):
         "nlvr2_attacked_labels": nlvr2_labels,
     }
 
-    phase = "train" if pl_module.training else "val"
-
+    phase = "train" if pl_module.training else "val"              
     if phase == "train":
         loss = getattr(pl_module, f"{phase}_nlvr2_attacked_loss")(ret["nlvr2_attacked_loss"])
         acc = getattr(pl_module, f"{phase}_nlvr2_attacked_accuracy")(
@@ -748,18 +776,14 @@ def compute_nlvr2_attack(pl_module, batch):
             test_acc = getattr(pl_module, f"test_nlvr2_attacked_accuracy")(
                 ret["nlvr2_attacked_logits"][test_batches], ret["nlvr2_attacked_labels"][test_batches]
             )
-            
-            change_rate = getattr(pl_module, f"test_nlvr2_attacked_change_rate")(
-                ret["nlvr2_attacked_logits"][test_batches], ret["nlvr2_logits"][test_batches]
+            change_rate_cross = getattr(pl_module, f"test_nlvr2_attacked_change_rate_cross")(
+                ret["nlvr2_attacked_logits"][test_batches], ret["nlvr2_logits"][test_batches], 
+                ret["nlvr2_attacked_labels"][test_batches]
             )
-            
+          
             pl_module.log(f"nlvr2_attacked/test/loss", test_loss)
             pl_module.log(f"nlvr2_attacked/test/accuracy", test_acc)
-            pl_module.log(f"nlvr2_attacked/test/change_rate", change_rate)
-            
-            ## Save img_delta
-            
-            ## Save attacked_sentence
+            pl_module.log(f"nlvr2_attacked/test/change_rate_cross", change_rate_cross)
 
     return ret
 

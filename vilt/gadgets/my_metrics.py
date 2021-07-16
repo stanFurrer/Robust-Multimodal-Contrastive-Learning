@@ -33,18 +33,22 @@ class change_rate(Metric):
         self.add_state("changed", default=torch.tensor(0.0), dist_reduce_fx="sum")
         self.add_state("total", default=torch.tensor(0.0), dist_reduce_fx="sum")
 
-    def update(self, logits_attack, logits):
-        logits_attack, logits = (
+    def update(self, logits_attack, logits,target):
+        logits_attack, logits , target = (
             logits_attack.detach().to(self.changed.device),
             logits.detach().to(self.changed.device),
+            target.detach().to(self.changed.device),
         )
         preds_attack = logits_attack.argmax(dim=-1)
         preds = logits.argmax(dim=-1)
+        preds_attack = preds_attack[target != -100]
+        preds = preds[target != -100]
+        target = target[target != -100]
         
         assert preds_attack.shape == preds.shape
 
         self.changed += torch.sum(preds_attack != preds)
-        self.total += logits_attack.numel()
+        self.total   += target.numel()
 
     def compute(self):
         return self.changed / self.total    
