@@ -18,6 +18,10 @@ class PGDAttack:
     
     def build_mini_vilt(self, pl_module):
         raise NotImplementedError(f"Build_mini_vilt of {self.contrastive_framework} isn't implemented.")
+    def vilt_zero_grad(self):
+        raise NotImplementedError(f"vilt_zero_grad of {self.contrastive_framework} isn't implemented.")
+    def pgd_attack(self, pl_module, batch, k_text):
+        raise NotImplementedError(f"pgd_attack of {self.contrastive_framework} isn't implemented.")
     
     def infer(
             self,
@@ -80,27 +84,20 @@ class PGDAttack:
         }
         
         return ret
-    
-    def vilt_zero_grad(self):
-        raise NotImplementedError(f"vilt_zero_grad of {self.contrastive_framework} isn't implemented.")
-
-    def pgd_attack(self, pl_module, batch, k_text):
-        raise NotImplementedError(f"pgd_attack of {self.contrastive_framework} isn't implemented.")
-
 
 class PGDAttack_moco(PGDAttack):
     def __init__(self, config):
         super().__init__(config, "moco")
         # a mini ViLTransformerSS
         self.moco_head = None
-
+    
     def build_mini_vilt(self, pl_module):
         self.pl_module = pl_module
         self.text_embeddings = deepcopy(pl_module.text_embeddings)
         self.token_type_embeddings = deepcopy(pl_module.token_type_embeddings)
         self.transformer = deepcopy(pl_module.transformer)
         self.moco_head = deepcopy(pl_module.moco_head)
-
+    
     def vilt_zero_grad(self):
         self.text_embeddings.zero_grad()
         self.transformer.zero_grad()
@@ -152,8 +149,8 @@ class PGDAttack_moco(PGDAttack):
                 img_delta = torch.clamp(img_delta, -self.adv_max_norm_img, self.adv_max_norm_img).detach()
                 
         return img_delta
-
-
+    
+    
 class PGDAttack_bartlowtwins(PGDAttack):
     def __init__(self, config):
         super().__init__(config, "barlowtwins")

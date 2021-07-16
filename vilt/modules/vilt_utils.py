@@ -32,12 +32,22 @@ def set_metrics(pl_module):
                 if split == "train":
                     setattr(pl_module, f"train_{k}_accuracy", Accuracy())
                     setattr(pl_module, f"train_{k}_loss", Scalar())
+                    if pl_module.image_attack:
+                        setattr(pl_module, f"train_{k}_delta", Scalar())
+                    if pl_module.text_attack:
+                        setattr(pl_module, f"train_{k}_num_changes", Scalar())
+                        setattr(pl_module, f"train_{k}_change_rate", Scalar())
                 else:
                     setattr(pl_module, f"dev_{k}_accuracy", Accuracy())
                     setattr(pl_module, f"dev_{k}_loss", Scalar())
                     setattr(pl_module, f"test_{k}_accuracy", Accuracy())
-                    setattr(pl_module, f"test_{k}_loss", Scalar())
-                    setattr(pl_module, f"test_{k}_change_rate", change_rate())
+                    setattr(pl_module, f"test_{k}_loss", Scalar()) 
+                    setattr(pl_module, f"test_{k}_change_rate_cross", change_rate())
+                    if pl_module.image_attack:
+                        setattr(pl_module, f"test_{k}_delta", Scalar())
+                    if pl_module.text_attack:
+                        setattr(pl_module, f"test_{k}_num_changes", Scalar())
+                        setattr(pl_module, f"test_{k}_change_rate", Scalar())
             
             elif k == "irtr":
                 setattr(pl_module, f"{split}_irtr_loss", Scalar())
@@ -136,6 +146,19 @@ def epoch_wrapup(pl_module):
                     getattr(pl_module, f"train_{loss_name}_loss").compute(),
                 )
                 getattr(pl_module, f"train_{loss_name}_loss").reset()
+                
+                if pl_module.image_attack:
+                    value = getattr(pl_module, f"train_{loss_name}_delta").compute()
+                    pl_module.log(f"{loss_name}/train/img_delta_epoch", value)
+                    getattr(pl_module, f"train_{loss_name}_delta").reset()
+                if pl_module.text_attack:
+                    value = getattr(pl_module, f"train_{loss_name}_num_changes").compute()
+                    pl_module.log(f"{loss_name}/train/txt_num_changes", value)
+                    getattr(pl_module, f"train_{loss_name}_num_changes").reset()
+                    value = getattr(pl_module, f"train_{loss_name}_change_rate").compute()
+                    pl_module.log(f"{loss_name}/train/txt_change_rate", value)
+                    getattr(pl_module, f"train_{loss_name}_change_rate").reset()
+                 
             else:
                 value = getattr(pl_module, f"dev_{loss_name}_accuracy").compute()
                 pl_module.log(f"{loss_name}/dev/accuracy_epoch", value)
@@ -150,16 +173,28 @@ def epoch_wrapup(pl_module):
                 pl_module.log(f"{loss_name}/test/accuracy_epoch", value)
                 getattr(pl_module, f"test_{loss_name}_accuracy").reset()
                 
-                value_change = getattr(pl_module, f"test_{loss_name}_change_rate").compute()
-                pl_module.log(f"{loss_name}/test/change_rate_epoch", value_change)
-                getattr(pl_module, f"test_{loss_name}_change_rate").reset()
+                value_change = getattr(pl_module, f"test_{loss_name}_change_rate_cross").compute()
+                pl_module.log(f"{loss_name}/test/_change_rate_cross_epoch", value_change)
+                getattr(pl_module, f"test_{loss_name}_change_rate_cross").reset()
                 
                 pl_module.log(
                     f"{loss_name}/test/loss_epoch",
                     getattr(pl_module, f"test_{loss_name}_loss").compute(),
                 )
-                getattr(pl_module, f"test_{loss_name}_loss").reset()
-
+                getattr(pl_module, f"test_{loss_name}_loss").reset()    
+                
+                if pl_module.image_attack:
+                    value = getattr(pl_module, f"test_{loss_name}_delta").compute()
+                    pl_module.log(f"{loss_name}/test/img_delta_epoch", value)
+                    getattr(pl_module, f"test_{loss_name}_delta").reset()
+                if pl_module.text_attack:
+                    value = getattr(pl_module, f"test_{loss_name}_num_changes").compute()
+                    pl_module.log(f"{loss_name}/test/txt_num_changes", value)
+                    getattr(pl_module, f"test_{loss_name}_num_changes").reset()
+                    value = getattr(pl_module, f"test_{loss_name}_change_rate").compute()
+                    pl_module.log(f"{loss_name}/test/txt_change_rate", value)
+                    getattr(pl_module, f"test_{loss_name}_change_rate").reset()
+                   
         elif loss_name == "irtr":
             pl_module.log(
                 f"{loss_name}/{phase}/irtr_loss_epoch",

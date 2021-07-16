@@ -4,16 +4,25 @@ import pytorch_lightning as pl
 
 from vilt.config import ex
 from vilt.modules.vilt_module import ViLTransformerSS
-#from vilt.modules.vilt_module_correct import ViLTransformerSS
 from vilt.datamodules.multitask_datamodule import MTDataModule
 
 
 @ex.automain
 def main(_config):
     _config = copy.deepcopy(_config)
-
-    # os.environ['MASTER_ADDR'] = 'localhost'
-    # os.environ['MASTER_PORT'] = '12355'
+    print("------------------------------")
+    if _config["image_attack"] :
+        print("Hyper parameter for pgd")
+        print("adv_lr_img :",_config["adv_lr_img"])
+        print("adv_max_norm_img :",_config["adv_max_norm_img"])
+    if _config["text_attack"] :
+        print("\nHyper parameter for Geometric")
+        print("n_candidates :",_config["n_candidates"])
+        print("max_loops :",_config["max_loops"])
+    print("------------------------------\n")
+    
+    #os.environ['MASTER_ADDR'] = 'localhost'
+    #os.environ['MASTER_PORT'] = '12355'
     
     pl.seed_everything(_config["seed"])
 
@@ -30,11 +39,22 @@ def main(_config):
         mode="max",
         save_last=True,
     )
-    logger = pl.loggers.TensorBoardLogger(
-        _config["log_dir"],
-        name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}',
-    )
-
+    if _config["image_attack"] :
+        logger = pl.loggers.TensorBoardLogger(
+            _config["log_dir"],
+            name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}_lr{_config["adv_lr_img"]}_norm{_config["adv_max_norm_img"]}',
+        )
+    elif _config["text_attack"] :
+        logger = pl.loggers.TensorBoardLogger(
+            _config["log_dir"],
+            name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}_candidate{_config["n_candidates"]}_loop{_config["max_loops"]}',
+        )
+    else :
+        logger = pl.loggers.TensorBoardLogger(
+            _config["log_dir"],
+            name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}',
+        )
+        
     lr_callback = pl.callbacks.LearningRateMonitor(logging_interval="step")
     callbacks = [checkpoint_callback, lr_callback]
 

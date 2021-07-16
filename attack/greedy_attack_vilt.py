@@ -199,15 +199,14 @@ class GreedyAttack:
     
     def get_important_scores(self, grads, words_to_sub_words):
         index_scores = [0.0] * len(words_to_sub_words)
-        # print(len(words_to_sub_words), words_to_sub_words)
         for i in range(len(words_to_sub_words)):
-            # print(i, words_to_sub_words[i])
             matched_tokens  = words_to_sub_words[i]
             agg_grad        = np.mean(grads[matched_tokens], axis=0)
+
             index_scores[i] = np.linalg.norm(agg_grad, ord=1)
         return index_scores
        
-    def get_inputs(self, sentences, tokenizer, device):
+    def get_inputs(self,sentences, tokenizer, device):
         outputs        = tokenizer(sentences, truncation=True, padding=True, max_length=self.max_length)
         input_ids      = outputs["input_ids"]
         attention_mask = outputs["attention_mask"]
@@ -323,7 +322,7 @@ class GreedyAttack:
                         ori_words[i][word_idx[i]] = new_word
                         all_new_text.append(' '.join(ori_words[i]))
                     changed.append(True)
-                else:
+                else :
                     nbr_candidat = 1 
                     all_new_text.append(' '.join(ori_words[i]))
                     changed.append(False)
@@ -350,14 +349,14 @@ class GreedyAttack:
         """Do a Forward pass to get the text Representation"""
         raise NotImplementedError(f"split_forward of {self.contrastive_framework} isn't implemented.")
         
-    def adv_attack_samples(self, 
-                           pl_module,            
-                           batch,           
+    def adv_attack_samples(self,
+                           pl_module,
+                           batch,
                            k_image,
                           ):
         raise NotImplementedError(f"adv_attack_samples of {self.contrastive_framework} isn't implemented.")
-
-
+        
+        
 class GreedyAttack_moco(GreedyAttack):
     def __init__(self, config):
         super().__init__(config, "moco")
@@ -370,13 +369,13 @@ class GreedyAttack_moco(GreedyAttack):
         self.token_type_embeddings = deepcopy(pl_module.token_type_embeddings)
         self.transformer = deepcopy(pl_module.transformer)
         self.moco_head = deepcopy(pl_module.moco_head)
-   
+        
     def vilt_zero_grad(self):
         self.text_embeddings.zero_grad()
         self.transformer.zero_grad()
         self.token_type_embeddings.zero_grad()
         self.moco_head.zero_grad()
-    
+        
     def get_grad(self,
                  input_ids,
                  text_masks,
@@ -386,7 +385,7 @@ class GreedyAttack_moco(GreedyAttack):
                  k_image,
                  ):
         embedding_layer = self.text_embeddings.word_embeddings  # word_embeddings
-        projector_layer = self.moco_head.model.linear2
+        projector_layer = self.moco_head.txt_model.linear2
         
         original_state_pro = projector_layer.weight.requires_grad
         projector_layer.weight.requires_grad = True
@@ -419,13 +418,12 @@ class GreedyAttack_moco(GreedyAttack):
             
             ################ RMCL #################
             l_pos = torch.einsum('nc,nc->n', [q_attacked, k_image]).unsqueeze(-1)
-            l_neg = torch.einsum('nc,ck->nk', [q_attacked, self.pl_module.image_queue.clone().detach()])
+            l_neg = torch.einsum('nc,ck->nk', [q_attacked, self.pl_module.text_queue.clone().detach()])
             logits = torch.cat([l_pos, l_neg], dim=1)
             logits /= self.pl_module.temperature
             labels = torch.zeros(logits.shape[0], dtype=torch.long)
             labels = labels.type_as(logits)
             loss = self.criterion(logits.float(), labels.long())
-            # print("loss", loss)
             loss.backward()
             ################ RMCL #################
         
@@ -438,16 +436,16 @@ class GreedyAttack_moco(GreedyAttack):
         emb_hook.remove()
         pro_hook.remove()
         
-        text_representation = q_attacked
+        text_representation = text_representation_q
         return grads_z, grads, text_representation
-   
+    
     def split_forward(self, batch):
         """Do a Forward pass to get the text Representation"""
         with torch.no_grad():
             infer = self.infer(batch, mask_text=False, mask_image=False)
             image_representation_q, text_representation_q = self.moco_head(infer['image_feats'], infer['text_feats'])
         
-        text_representation = nn.functional.normalize(text_representation_q, dim=1)
+        text_representation = text_representation_q
         return text_representation
     
     def adv_attack_samples(self,
@@ -473,10 +471,14 @@ class GreedyAttack_moco(GreedyAttack):
         self.build_mini_vilt(pl_module)
         
         self.replace_history = [set() for _ in range(batch_size)]
+        # Test
+        changes_verification = [0] * batch_size #
+        
+        
         for iter_idx in range(self.max_loops):
             # ori_z    : text_representation
             # vector_z : gradient_projector (project.text.linear2)
-            # print("iteration: ", iter_idx)
+            # print(cur_words)
             replace_idx, vector_z, ori_z = self.compute_word_importance(words=cur_words,
                                                                         input_ids=txt_input_ids,
                                                                         text_masks=text_masks,
@@ -487,78 +489,80 @@ class GreedyAttack_moco(GreedyAttack):
                                                                         k_image=k_image,
                                                                         )
             
-            all_new_text, all_num, changed = self.construct_new_samples(word_idx=replace_idx,
+            all_new_text, all_num,changed = self.construct_new_samples(word_idx=replace_idx,
                                                                words=cur_words,
                                                                batch_size=batch_size)
             
-            # all_new_false_image_0 = []
-            # all_new_replica = []
-            # all_new_raw_index = []
-            # all_new_cap_index = []
-            # all_new_img_index = []
+            print("This is all_num",all_num)
+            all_new_false_image_0 = []
+            all_new_replica = []
+            all_new_raw_index = []
+            all_new_cap_index = []
+            all_new_img_index = []
             all_new_image = []
             # all_new_iid             = []
             all_new_text_labels = []
-            # all_new_text_ids_mlm = []
-            # all_new_text_labels_mlm = []
-            
+            all_new_text_ids_mlm = []
+            all_new_text_labels_mlm = []
+
             for idx, count in enumerate(all_num):
-                # all_new_false_image_0.extend([batch['false_image_0'][0][idx] for _ in range(count)])
-                # all_new_cap_index.extend([batch['cap_index'][idx] for _ in range(count)])
+                all_new_false_image_0.extend([batch['false_image_0'][0][idx] for _ in range(count)])
+                all_new_cap_index.extend([batch['cap_index'][idx] for _ in range(count)])
                 all_new_image.extend([batch['image'][0][idx] for _ in range(count)])
-                # all_new_replica.extend([batch['replica'][idx] for _ in range(count)])
-                # all_new_img_index.extend([batch['img_index'][idx] for _ in range(count)])
+                all_new_replica.extend([batch['replica'][idx] for _ in range(count)])
+                all_new_img_index.extend([batch['img_index'][idx] for _ in range(count)])
                 # all_new_iid.extend([batch['iid'][idx]for _ in range(count)])
-                # all_new_raw_index.extend([batch['raw_index'][idx] for _ in range(count)])
+                all_new_raw_index.extend([batch['raw_index'][idx] for _ in range(count)])
                 all_new_text_labels.extend([batch['text_labels'][idx] for _ in range(count)])
-                # all_new_text_ids_mlm.extend([batch['text_ids_mlm'][idx] for _ in range(count)])
-                # all_new_text_labels_mlm.extend([batch['text_labels_mlm'][idx] for _ in range(count)])
-            
+                all_new_text_ids_mlm.extend([batch['text_ids_mlm'][idx] for _ in range(count)])
+                all_new_text_labels_mlm.extend([batch['text_labels_mlm'][idx] for _ in range(count)])
+                
             # Get the correct format
-            # all_new_false_image_0 = [torch.stack(all_new_false_image_0)]
+            all_new_false_image_0 = [torch.stack(all_new_false_image_0)]
             all_new_image = [torch.stack(all_new_image)]
             all_new_text_labels = torch.stack(all_new_text_labels)
-            # all_new_text_ids_mlm = torch.stack(all_new_text_ids_mlm)
-            # all_new_text_labels_mlm = torch.stack(all_new_text_labels_mlm)
+            all_new_text_ids_mlm = torch.stack(all_new_text_ids_mlm)
+            all_new_text_labels_mlm = torch.stack(all_new_text_labels_mlm)
             
             # Get the inputs_ids
             all_new_text_ids, all_new_text_masks = self.get_inputs(all_new_text,
                                                                    self.tokenizer,
                                                                    self.device)
             batch_c = {}
-            # batch_c['false_image_0'] = all_new_false_image_0
-            # batch_c['cap_index'] = all_new_cap_index
+            batch_c['false_image_0'] = all_new_false_image_0
+            batch_c['cap_index'] = all_new_cap_index
             batch_c['image'] = all_new_image
-            # batch_c['replica'] = all_new_replica
-            # batch_c['img_index'] = all_new_img_index
+            batch_c['replica'] = all_new_replica
+            batch_c['img_index'] = all_new_img_index
             # batch_c['iid']             = all_new_iid
-            # batch_c['raw_index'] = all_new_raw_index
+            batch_c['raw_index'] = all_new_raw_index
             batch_c['text_labels'] = all_new_text_labels
-            # batch_c['text_ids_mlm'] = all_new_text_ids_mlm
-            # batch_c['text_labels_mlm'] = all_new_text_labels_mlm
+            batch_c['text_ids_mlm'] = all_new_text_ids_mlm
+            batch_c['text_labels_mlm'] = all_new_text_labels_mlm
             batch_c['text'] = all_new_text
             batch_c['text_ids'] = all_new_text_ids
             batch_c['text_masks'] = all_new_text_masks
             
             outputs = self.split_forward(batch_c)
             outputs = torch.split(outputs, all_num)
-            count = 0
+            count   = 0
             
             for i, cur_z in enumerate(outputs):
-                if not changed[i]:
+                if changed[i] == False :
                     count += len(cur_z)
                     continue
                     
                 cur_z = cur_z.float() - ori_z[i].float()
-                z = torch.repeat_interleave(vector_z[i].float().unsqueeze(0), repeats=len(cur_z), dim=0)
+                z = torch.repeat_interleave(vector_z[i].float().unsqueeze(0),
+                                            repeats=len(cur_z), dim=0)
                 cur_z_norm = cur_z.norm(dim=1)
                 
                 cosin_z = self.cosine_similarity(cur_z, z)
                 project_z = torch.mul(cur_z_norm, cosin_z)
                 selected_idx = torch.argmax(project_z)
-                # print("project_z[selected_ids]", project_z[selected_idx])
-                # if True:
+                print("This is selected index",selected_idx)
                 if project_z[selected_idx] > 0:
+                    changes_verification[i]+=1 #
                     cur_words[i] = all_new_text[int(selected_idx) + count].split(' ')
                     self.words_to_sub_words[i] = {}
                     position = 0
@@ -568,27 +572,34 @@ class GreedyAttack_moco(GreedyAttack):
                             break
                         self.words_to_sub_words[i][idx] = np.arange(position, position + length)
                         position += length
-                
+                else :
+                    print("--------------------")
+                    print("This is the index : ",i)
+                    print("This is project_z[selected_idx]",project_z[selected_idx])
+                    print("all_new_text[int(selected_idx) + count].split(' ')",all_new_text[int(selected_idx) + count].split(' '))
                 count += len(cur_z)
             text = [' '.join(x) for x in cur_words]
-            txt_input_ids, text_masks = self.get_inputs(text, self.tokenizer, self.device)
+            txt_input_ids, text_masks = \
+                self.get_inputs(text, self.tokenizer, self.device)
         
         num_changes = []
         change_rate = []
+        Problem     = False
         for old_words, new_words in zip(original_words, cur_words):
             changes = sum(~(np.array(old_words) == np.array(new_words)))
+            if changes ==0 :
+                Problem = True
             num_changes.append(changes)
             change_rate.append(changes / len(old_words))
-        
-        print("num_changes", num_changes)
-        # print(change_rate)
-        
-        return {'txt_input_ids': txt_input_ids,
-                'text_masks': text_masks,
-                'text': text,
-                'num_changes': np.mean(num_changes),
-                'change_rate': np.mean(change_rate)}
-
+            
+            
+        return {'txt_input_ids' : txt_input_ids,
+                'text_masks'    : text_masks ,
+                'text'          : text,
+                'num_changes'   : np.mean(num_changes),
+                'change_rate'   : np.mean(change_rate),
+                'Problem'       : Problem,
+                'changes_verification'       : changes_verification}
 
 class GreedyAttack_barlowtwins(GreedyAttack):
     def __init__(self, config):
@@ -663,7 +674,7 @@ class GreedyAttack_barlowtwins(GreedyAttack):
             on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
             off_diag = off_diagonal(c).pow_(2).sum()
 
-            loss = on_diag + self.pl_module.adv_lr * off_diag  # / self.pl_module.loss_weight
+            loss = on_diag + self.pl_module.adv_lr * off_diag / self.pl_module.loss_weight
             loss.backward()
             ################ RMCL #################
         
@@ -710,7 +721,6 @@ class GreedyAttack_barlowtwins(GreedyAttack):
         for iter_idx in range(self.max_loops):
             # ori_z    : text_representation
             # vector_z : gradient_projector (project.text.linear2)
-            # print(cur_words)
             replace_idx, vector_z, ori_z = self.compute_word_importance(words=cur_words,
                                                                         input_ids=txt_input_ids,
                                                                         text_masks=text_masks,
@@ -779,7 +789,8 @@ class GreedyAttack_barlowtwins(GreedyAttack):
             
             for i, cur_z in enumerate(outputs):
                 cur_z = cur_z.float() - ori_z[i].float()
-                z = torch.repeat_interleave(vector_z[i].float().unsqueeze(0), repeats=len(cur_z), dim=0)
+                z = torch.repeat_interleave(vector_z[i].float().unsqueeze(0),
+                                            repeats=len(cur_z), dim=0)
                 cur_z_norm = cur_z.norm(dim=1)
                 
                 cosin_z = self.cosine_similarity(cur_z, z)
@@ -803,16 +814,18 @@ class GreedyAttack_barlowtwins(GreedyAttack):
         
         num_changes = []
         change_rate = []
+        Problem     = False
         for old_words, new_words in zip(original_words, cur_words):
             changes = sum(~(np.array(old_words) == np.array(new_words)))
+            if changes ==0 :
+                Problem = True
             num_changes.append(changes)
             change_rate.append(changes / len(old_words))
-        
-        # print(num_changes)
-        # print(change_rate)
-        
-        return {'txt_input_ids': txt_input_ids,
-                'text_masks': text_masks,
-                'text': text,
-                'num_changes': np.mean(num_changes),
-                'change_rate': np.mean(change_rate)}
+            
+            
+        return {'txt_input_ids' : txt_input_ids,
+                'text_masks'    : text_masks ,
+                'text'          : text,
+                'num_changes'   : np.mean(num_changes),
+                'change_rate'   : np.mean(change_rate),
+                'Problem'       : Problem}

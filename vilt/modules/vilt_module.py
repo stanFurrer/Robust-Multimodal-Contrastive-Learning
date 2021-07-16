@@ -89,13 +89,14 @@ class ViLTransformerSS(pl.LightningModule):
             self.register_buffer("image_queue", torch.randn(128, self.num_negative))
             self.image_queue = nn.functional.normalize(self.image_queue, dim=0)
             self.register_buffer("image_queue_ptr", torch.zeros(1, dtype=torch.long))
+            
             if self.text_attack:
-                print("----Loading MoCo greedy attack ----")
+                print("----Loading greedy attack ----")
                 self.greedy_attacker = GreedyAttack_moco(config)
-                print("----MoCo Greedy attack Loaded ----")
+                print("----Greedy attack Loaded ----")
             if self.image_attack:
                 self.pgd_attacker = PGDAttack_moco(config)
-
+               
         if config["loss_names"]["barlowtwins"] > 0:
             self.per_step_bs = config["num_gpus"] * config["num_nodes"] * config["per_gpu_batchsize"]
             self.barlowtwins_head = heads.BarlowTwinsHead(config["hidden_size"], [8192, 8192], 8192)
@@ -104,12 +105,11 @@ class ViLTransformerSS(pl.LightningModule):
             self.adv_lr = config["adv_lr"]
             self.loss_weight = 0.001
             if self.text_attack:
-                print("----Loading Barlowtwins greedy attack ----")
+                print("----Loading greedy attack ----")
                 self.greedy_attacker = GreedyAttack_barlowtwins(config)
-                print("----Barlowtwins Greedy attack Loaded ----")
+                print("----Greedy attack Loaded ----")
             if self.image_attack:
                 self.pgd_attacker = PGDAttack_bartlowtwins(config)
-            
         # ===================== Downstream ===================== #
         if (
             self.hparams.config["load_path"] != ""
@@ -163,7 +163,7 @@ class ViLTransformerSS(pl.LightningModule):
             #param attacks
             self.image_attack = config["image_attack"]
             self.text_attack = config["text_attack"]
-            if config["text_attack"] :
+            if config["text_attack"]:
                 self.n_candidates = config["n_candidates"]
                 self.max_loops = config["max_loops"]
                 self.sim_thred = config["sim_thred"]
@@ -178,7 +178,7 @@ class ViLTransformerSS(pl.LightningModule):
                                             max_loops    = self.max_loops,
                                             tokenizer    = self.tokenizer)
                 print("----Greedy GreedyAttack_cross_entropy DONE ----")
-            if config["image_attack"] :
+            if config["image_attack"]:
                 self.adv_steps_img = config["adv_steps_img"]
                 self.adv_lr_img = config["adv_lr_img"]
                 self.adv_max_norm_img = config["adv_max_norm_img"]
@@ -249,9 +249,6 @@ class ViLTransformerSS(pl.LightningModule):
         # image_embeds.shape : [64 217 768] :: [batch,patch,hiddensize]
         # patch_index shape  : ([64 217 2]), (19,19)) (patch_index, (H,W))
         
-        # print("infer", text_ids.size())
-        # print("infer", text_embeds.size())
-        # print("infer", text_masks.size())
         text_embeds, image_embeds = (
             text_embeds + self.token_type_embeddings(torch.zeros_like(text_masks)),
             image_embeds

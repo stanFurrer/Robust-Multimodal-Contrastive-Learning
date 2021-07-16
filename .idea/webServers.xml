@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="c793b2e8-090e-4a65-b5f6-f632533ac79e" name="vilt">
+        <fileTransfer accessType="SFTP" host="tik43x.ethz.ch" port="22" sshConfigId="2c3f87a3-5f28-42c2-8ce5-21ae2157cc9a" sshConfig="yirxing@tik43x.ethz.ch:22 password">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>

@@ -240,7 +240,7 @@ def task_finetune_nlvr2_randaug_attacked():
     datasets = ["nlvr2"]
     train_transform_keys = ["pixelbert_randaug"]
     loss_names = _loss_names({"nlvr2_attacked": 1})
-    batch_size = 128
+    batch_size = 16
     max_epoch = 10
     max_steps = None
     warmup_steps = 0.1
@@ -251,16 +251,16 @@ def task_finetune_nlvr2_randaug_attacked():
     image_attack = False
     # PGD
     adv_steps_img = 5
-    adv_lr_img = 0.5
-    adv_max_norm_img = 0.1
+    adv_lr_img = 0.7
+    adv_max_norm_img = 0.2
     #Geometric
     n_candidates = 10
     max_loops = 10
     sim_thred = 0.5
     cos_sim = True
     synonym = "cos_sim"
-    embedding_path = './Geometric_attack/counter-fitted-vectors.txt'
-    sim_path = 'cos_sim_counter_fitting.npy'
+    embedding_path = './attack/counter-fitted-vectors.txt'
+    sim_path = './attack/cos_sim_counter_fitting.npy'
     
 @ex.named_config
 def task_finetune_vqa():
