@@ -20,7 +20,6 @@ from vilt.modules.dist_utils import all_gather
 
 from augmentation.eda import eda
 
-
 def cost_matrix_cosine(x, y, eps=1e-5):
     """Compute cosine distnace across every pairs of x, y (batched)
     [B, L_x, D] [B, L_y, D] -> [B, Lx, Ly]"""
@@ -94,6 +93,33 @@ def optimal_transport_dist(
     distance = trace(cost.matmul(T.detach()))
     return distance
 
+def text_augmentation(pl_module, batch):
+    txt_input  = []
+    text_masks = []
+    if pl_module.type_txt_augm == "PEGASUS" : 
+        batch_pegasus = pl_module.tokenizer_pegasus(batch["text"], 
+                                                 truncation=True, padding='longest', return_tensors="pt").to(pl_module.device)
+        translated = pl_module.pegasus.generate(**batch_pegasus).to(pl_module.device)
+        augmented_text = pl_module.tokenizer_pegasus.batch_decode(translated, skip_special_tokens=True)
+        
+    if pl_module.type_txt_augm == "EDA" : 
+        augmented_text = []
+        for i,sentence in enumerate(batch["text"]) : 
+            augmented_text.append(eda(sentence, alpha_sr=0.1, alpha_ri=0.1, alpha_rs=0.1, p_rd=0.1, num_aug=1))
+    
+    #for i,sentence in enumerate(batch["text"]) : 
+    #    print("Original sentence :::", sentence)
+    #    print("Augmented sentence:::", augmented_text[i]) 
+        
+    outputs = pl_module.tokenizer(augmented_text, truncation=True, padding=True, max_length=pl_module.max_length)
+    batch["text"]       = augmented_text
+    batch["text_ids"]  = torch.tensor(outputs["input_ids"]).to(pl_module.device)
+    batch["text_masks"] = torch.tensor(outputs["attention_mask"]).to(pl_module.device)  
+        
+    return batch
+    
+def image_augmentation(pl_module, batch):    
+    print("TODO")
 
 def compute_pgd(pl_module, batch, loss_name, k_text=None):
     img_delta = pl_module.pgd_attacker.pgd_attack(pl_module, batch, k_text)
@@ -124,7 +150,7 @@ def compute_geometric(pl_module, batch, loss_name, k_image=None):
                                   }
         
     batch["text"]          = attack_words["text"]
-    batch["txt_input"]     = attack_words["txt_input_ids"]
+    batch["text_ids"]     = attack_words["txt_input_ids"]
     batch["text_masks"]    = attack_words["text_masks"]
 
     phase = "train" if pl_module.training else "val"
@@ -136,15 +162,6 @@ def compute_geometric(pl_module, batch, loss_name, k_image=None):
     return batch #, txt_original_attacked
 
 def compute_moco_contrastive(pl_module, batch):
-    # Do Data Augmentation
-    
-    batch_augmented = deepcopy(batch)
-    for i,sentence in enumerate(batch_augmented["text"]) : 
-        print("This is original sentence",sentence)
-        augmented_text = eda(sentence, alpha_sr=0.1, alpha_ri=0.1, alpha_rs=0.1, p_rd=0.1, num_aug=9)
-        print("This is augmented sentence",augmented_text)
-    
-    sys.exit("Congratulation")
     
     def _momentum_update_key_layer(em, q_layer, k_layer):
         """
@@ -200,9 +217,12 @@ def compute_moco_contrastive(pl_module, batch):
         k_text = nn.functional.normalize(text_representation_k, dim=1)
         k_image = nn.functional.normalize(image_representation_k, dim=1)
 
-    if pl_module.image_attack:
-        attacked_batch = compute_pgd(pl_module, deepcopy(batch), "moco", k_text)
-        infer = pl_module.infer(attacked_batch, mask_text=False, mask_image=False)
+    if pl_module.image_view:
+        if pl_module.augmentation : 
+            augmented_batch = image_augmentation(pl_module, deepcopy(batch))
+        else : 
+            augmented_batch = compute_pgd(pl_module, deepcopy(batch), "moco", k_text)
+        infer = pl_module.infer(augmented_batch, mask_text=False, mask_image=False)
         image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
         q = nn.functional.normalize(image_representation_q, dim=1)
 
@@ -248,9 +268,12 @@ def compute_moco_contrastive(pl_module, batch):
         loss = loss + loss_fct(logits.float(), labels.long())
         loss_num += 1
 
-    if pl_module.text_attack:
-        attacked_batch = compute_geometric(pl_module, deepcopy(batch), "moco", k_image)
-        infer = pl_module.infer(attacked_batch, mask_text=False, mask_image=False)
+    if pl_module.text_view:
+        if pl_module.augmentation : 
+            augmented_batch = text_augmentation(pl_module, deepcopy(batch))
+        else :     
+            augmented_batch = compute_geometric(pl_module, deepcopy(batch), "moco", k_image)
+        infer = pl_module.infer(augmented_batch, mask_text=False, mask_image=False)
         image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
         q = nn.functional.normalize(text_representation_q, dim=1)
 
@@ -306,12 +329,12 @@ def compute_moco_contrastive(pl_module, batch):
     phase = "train" if pl_module.training else "val"
     loss = getattr(pl_module, f"{phase}_moco_loss")(ret["moco_loss"])
     pl_module.log(f"moco/{phase}/loss", loss)
-    if pl_module.image_attack:    
+    if pl_module.image_view:    
         img_img_dist = getattr(pl_module, f"{phase}_moco_img_img_dist")(ret["image_image_neg_dist"] - ret["image_image_pos_dist"])
         pl_module.log(f"moco/{phase}/img_img_dist", img_img_dist)
         img_txt_dist = getattr(pl_module, f"{phase}_moco_img_txt_dist")(ret["image_text_neg_dist"] - ret["image_text_pos_dist"])
         pl_module.log(f"moco/{phase}/img_txt_dist", img_txt_dist)
-    if pl_module.text_attack:
+    if pl_module.text_view:
         txt_txt_dist = getattr(pl_module, f"{phase}_moco_txt_txt_dist")(ret["text_text_neg_dist"] - ret["text_text_pos_dist"])
         pl_module.log(f"moco/{phase}/txt_txt_dist", txt_txt_dist)
         txt_img_dist = getattr(pl_module, f"{phase}_moco_txt_img_dist")(ret["text_image_neg_dist"] - ret["text_image_pos_dist"])
@@ -329,9 +352,12 @@ def compute_barlowtwins_contrastive(pl_module, batch):
         assert n == m
         return  x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
     
-    if pl_module.image_attack:
-        attacked_batch = compute_pgd(pl_module, deepcopy(batch), "barlowtwins")
-        infer = pl_module.infer(attacked_batch, mask_text=False, mask_image=False)
+    if pl_module.image_view:
+        if pl_module.augmentation : 
+            augmented_batch = image_augmentation(pl_module, deepcopy(batch))
+        else : 
+            augmented_batch = compute_pgd(pl_module, deepcopy(batch), "barlowtwins")
+        infer = pl_module.infer(augmented_batch, mask_text=False, mask_image=False)
         image_representation, text_representation = pl_module.barlowtwins_head(infer['image_feats'], infer['text_feats'])
         c = image_representation.T @ text_representation
         
@@ -344,9 +370,12 @@ def compute_barlowtwins_contrastive(pl_module, batch):
         loss = on_diag + pl_module.adv_lr * off_diag
         loss_num += 1
 
-    if pl_module.text_attack:
-        attacked_batch = compute_geometric(pl_module, deepcopy(batch), "barlowtwins")
-        infer = pl_module.infer(attacked_batch, mask_text=False, mask_image=False)
+    if pl_module.text_view:
+        if pl_module.augmentation : 
+            augmented_batch = text_augmentation(pl_module, deepcopy(batch))
+        else : 
+            augmented_batch = compute_geometric(pl_module, deepcopy(batch), "barlowtwins")
+        infer = pl_module.infer(augmented_batch, mask_text=False, mask_image=False)
         image_representation, text_representation = pl_module.barlowtwins_head(infer['image_feats'], infer['text_feats'])
         c = image_representation.T @ text_representation
     
@@ -683,7 +712,7 @@ def compute_geometric_finetuning(pl_module, batch,loss_name) :
                                 }
     
     batch["text"]          = attack_words["text"]
-    batch["txt_input_ids"] = attack_words["txt_input_ids"]
+    batch["text_ids"]      = attack_words["txt_input_ids"]
     batch["text_masks"]    = attack_words["text_masks"]
 
     phase = "train" if pl_module.training else "test"
@@ -711,7 +740,7 @@ def compute_nlvr2_attack(pl_module, batch):
     cls_feats    = torch.cat([infer1["cls_feats"], infer2["cls_feats"]], dim=-1)
     nlvr2_logits = pl_module.nlvr2_classifier(cls_feats)        
     
-    if pl_module.image_attack : 
+    if pl_module.image_view : 
         
         batch_attacked,img_delta_dict = \
             compute_pgd_finetuning(pl_module,deepcopy(batch),"nlvr2_attacked")    
@@ -731,7 +760,7 @@ def compute_nlvr2_attack(pl_module, batch):
             with open(os.path.join(save_path,'img_delta_dict{}_max_norm_{}_lr_{}.pkl'\
                 .format(saving,pl_module.adv_max_norm_img,pl_module.adv_lr_img)), 'wb') as fp:
                         pickle.dump(img_delta_dict, fp, protocol=pickle.HIGHEST_PROTOCOL)      
-    if pl_module.text_attack : 
+    if pl_module.text_view : 
         
         batch_attacked,txt_original_attacked = \
         compute_geometric_finetuning(pl_module, deepcopy(batch),"nlvr2_attacked")

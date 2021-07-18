@@ -32,9 +32,9 @@ def set_metrics(pl_module):
                 if split == "train":
                     setattr(pl_module, f"train_{k}_accuracy", Accuracy())
                     setattr(pl_module, f"train_{k}_loss", Scalar())
-                    if pl_module.image_attack:
+                    if pl_module.image_view:
                         setattr(pl_module, f"train_{k}_delta", Scalar())
-                    if pl_module.text_attack:
+                    if pl_module.text_view:
                         setattr(pl_module, f"train_{k}_num_changes", Scalar())
                         setattr(pl_module, f"train_{k}_change_rate", Scalar())  
                 else:
@@ -43,9 +43,9 @@ def set_metrics(pl_module):
                     setattr(pl_module, f"test_{k}_accuracy", Accuracy())
                     setattr(pl_module, f"test_{k}_loss", Scalar()) 
                     setattr(pl_module, f"test_{k}_change_rate_cross", change_rate())
-                    if pl_module.image_attack:
+                    if pl_module.image_view:
                         setattr(pl_module, f"test_{k}_delta", Scalar())
-                    if pl_module.text_attack:
+                    if pl_module.text_view:
                         setattr(pl_module, f"test_{k}_num_changes", Scalar())
                         setattr(pl_module, f"test_{k}_change_rate", Scalar())                    
             
@@ -58,9 +58,9 @@ def set_metrics(pl_module):
                 setattr(pl_module, f"{split}_{k}_loss", Scalar())
                 setattr(pl_module, f"{split}_{k}_wpa_loss", Scalar())
             elif k == "moco":
-                if pl_module.image_attack:
+                if pl_module.image_view:
                     setattr(pl_module, f"{split}_{k}_delta", Scalar())
-                if pl_module.text_attack:
+                if pl_module.text_view:
                     setattr(pl_module, f"{split}_{k}_num_changes", Scalar())
                     setattr(pl_module, f"{split}_{k}_change_rate", Scalar())
                 setattr(pl_module, f"{split}_{k}_loss", Scalar())
@@ -69,9 +69,9 @@ def set_metrics(pl_module):
                 setattr(pl_module, f"{split}_{k}_txt_txt_dist", Scalar())
                 setattr(pl_module, f"{split}_{k}_txt_img_dist", Scalar())
             elif k == "barlowtwins":
-                if pl_module.image_attack:
+                if pl_module.image_view:
                     setattr(pl_module, f"{split}_{k}_delta", Scalar())
-                if pl_module.text_attack:
+                if pl_module.text_view:
                     setattr(pl_module, f"{split}_{k}_num_changes", Scalar())
                     setattr(pl_module, f"{split}_{k}_change_rate", Scalar())
                 setattr(pl_module, f"{split}_{k}_loss", Scalar())
@@ -166,11 +166,11 @@ def epoch_wrapup(pl_module):
                 )
                 getattr(pl_module, f"train_{loss_name}_loss").reset()
                 
-                if pl_module.image_attack:
+                if pl_module.image_view:
                     value = getattr(pl_module, f"train_{loss_name}_delta").compute()
                     pl_module.log(f"{loss_name}/train/img_delta_epoch", value)
                     getattr(pl_module, f"train_{loss_name}_delta").reset()
-                if pl_module.text_attack:
+                if pl_module.text_view:
                     value = getattr(pl_module, f"train_{loss_name}_num_changes").compute()
                     pl_module.log(f"{loss_name}/train/txt_num_changes", value)
                     getattr(pl_module, f"train_{loss_name}_num_changes").reset()
@@ -202,11 +202,11 @@ def epoch_wrapup(pl_module):
                 )
                 getattr(pl_module, f"test_{loss_name}_loss").reset()    
                 
-                if pl_module.image_attack:
+                if pl_module.image_view:
                     value = getattr(pl_module, f"test_{loss_name}_delta").compute()
                     pl_module.log(f"{loss_name}/test/img_delta_epoch", value)
                     getattr(pl_module, f"test_{loss_name}_delta").reset()
-                if pl_module.text_attack:
+                if pl_module.text_view:
                     value = getattr(pl_module, f"test_{loss_name}_num_changes").compute()
                     pl_module.log(f"{loss_name}/test/txt_num_changes", value)
                     getattr(pl_module, f"test_{loss_name}_num_changes").reset()
@@ -242,11 +242,11 @@ def epoch_wrapup(pl_module):
             getattr(pl_module, f"{phase}_{loss_name}_wpa_loss").reset()
             
         elif loss_name == "moco" or loss_name == "barlowtwins":
-            if pl_module.image_attack:
+            if pl_module.image_view:
                 value = getattr(pl_module, f"{phase}_{loss_name}_delta").compute()
                 pl_module.log(f"{loss_name}/{phase}/img_delta_epoch", value)
                 getattr(pl_module, f"{phase}_{loss_name}_delta").reset()
-            if pl_module.text_attack:
+            if pl_module.text_view:
                 value = getattr(pl_module, f"{phase}_{loss_name}_num_changes").compute()
                 pl_module.log(f"{loss_name}/{phase}/txt_num_changes", value)
                 getattr(pl_module, f"{phase}_{loss_name}_num_changes").reset()

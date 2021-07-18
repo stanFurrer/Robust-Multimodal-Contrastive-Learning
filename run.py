@@ -10,12 +10,14 @@ from vilt.datamodules.multitask_datamodule import MTDataModule
 @ex.automain
 def main(_config):
     _config = copy.deepcopy(_config)
-    print("------------------------------")
-    if _config["image_attack"] : 
+    print("\n------------------------------")
+    if _config["augmentation"] : 
+        print("Doing the following text augmentation",_config["type_txt_augm"] ) 
+    if _config["image_view"] : 
         print("Hyper parameter for pgd")
         print("adv_lr_img :",_config["adv_lr_img"])
         print("adv_max_norm_img :",_config["adv_max_norm_img"])
-    if _config["text_attack"] :
+    if _config["text_view"] :
         print("\nHyper parameter for Geometric")
         print("n_candidates :",_config["n_candidates"])
         print("max_loops :",_config["max_loops"])        
@@ -39,12 +41,12 @@ def main(_config):
         mode="max",
         save_last=True,
     )
-    if _config["image_attack"] : 
+    if _config["image_view"] : 
         logger = pl.loggers.TensorBoardLogger(
             _config["log_dir"],
             name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}_lr{_config["adv_lr_img"]}_norm{_config["adv_max_norm_img"]}',
         )
-    elif _config["text_attack"] :
+    elif _config["text_view"] :
         logger = pl.loggers.TensorBoardLogger(
             _config["log_dir"],
             name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}_candidate{_config["n_candidates"]}_loop{_config["max_loops"]}',

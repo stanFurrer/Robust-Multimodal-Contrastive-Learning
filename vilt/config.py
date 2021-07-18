@@ -67,8 +67,10 @@ def config():
 
     # Contrastive setting
     num_negative = 0
-    text_attack = False
-    image_attack = False
+    text_view = False
+    image_view = False
+    augmentation = False
+    type_txt_augm = "PEGASUS" # EDA
     momentum = 1.0
     temperature = 1.0
     adv_lr = 0.0051
@@ -121,8 +123,10 @@ def task_moco():
     num_negative = 65536
     momentum = 0.999
     temperature = 0.07
-    text_attack = False
-    image_attack = True
+    augmentation = True
+    text_view = True
+    image_view = False
+    type_txt_augm = "EDA" # EDA    
     loss_names = _loss_names({"moco": 1})
     # batch_size = 4096
     batch_size = 128
@@ -149,8 +153,8 @@ def task_barlowtwins():
     exp_name = "barlowtwins"
     # datasets = ["coco", "vg", "sbu", "gcc"]
     datasets = ["coco"]
-    text_attack = True
-    image_attack = False
+    text_view = True
+    image_view = False
     loss_names = _loss_names({"barlowtwins": 1})
     adv_lr = 0.0051
     batch_size = 256
@@ -243,8 +247,8 @@ def task_finetune_nlvr2_randaug_attacked():
     draw_false_image = 0
     learning_rate = 1e-4
     # Attacks parameters
-    text_attack = True
-    image_attack = False
+    text_view = True
+    image_view = False
     # PGD
     adv_steps_img = 5
     adv_lr_img = 0.7

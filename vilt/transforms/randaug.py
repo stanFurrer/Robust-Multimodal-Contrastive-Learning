@@ -256,8 +256,8 @@ class CutoutDefault(object):
 
 class RandAugment:
     def __init__(self, n, m):
-        self.n = n
-        self.m = m  # [0, 30]
+        self.n = n # Default : 2
+        self.m = m  # Default : 9 included in [0, 30]
         self.augment_list = augment_list()
 
     def __call__(self, img):

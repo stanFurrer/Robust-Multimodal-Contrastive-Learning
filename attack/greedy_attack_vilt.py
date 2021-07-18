@@ -46,7 +46,7 @@ filter_words = set(filter_words)
 
 class GreedyAttack:
     def __init__(self, config, contrastive_framework=None):
-        self.pl_module = None
+        self.pl_module         = None
         self.contrastive_framework = contrastive_framework
         self.stopwords         = set(stopwords.words('english'))
         self.cosine_similarity = CosineSimilarity(dim=1, eps=1e-6)

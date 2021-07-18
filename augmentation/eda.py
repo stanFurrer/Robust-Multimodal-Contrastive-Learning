@@ -100,7 +100,6 @@ def get_synonyms(word):
 ########################################################################
 
 def random_deletion(words, p):
-    print("Hello")
     #obviously, if there's only one word, don't delete it
     if len(words) == 1:
         return words

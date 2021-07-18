@@ -8,6 +8,7 @@ from copy import deepcopy
 from collections import OrderedDict #
 from transformers import BertTokenizer#
 from Geometric_attack.greedy_attack_vilt_cross_entropy import GreedyAttack_cross_entropy #
+from transformers import PegasusForConditionalGeneration, PegasusTokenizer
 ####
 
 import torch
@@ -79,8 +80,9 @@ class ViLTransformerSS(pl.LightningModule):
             self._shadow_layer(self.moco_head, self.k_moco_head)
             self.momentum = config["momentum"]
             self.temperature = config["temperature"]
-            self.text_attack = config["text_attack"]
-            self.image_attack = config["image_attack"]
+            self.text_view = config["text_view"]
+            self.augmentation= config["augmentation"]
+            self.image_view = config["image_view"]
             self.num_negative = config["num_negative"]
             self.register_buffer("text_queue", torch.randn(128, self.num_negative))
             self.text_queue = nn.functional.normalize(self.text_queue, dim=0)
@@ -88,27 +90,41 @@ class ViLTransformerSS(pl.LightningModule):
             self.register_buffer("image_queue", torch.randn(128, self.num_negative))
             self.image_queue = nn.functional.normalize(self.image_queue, dim=0)
             self.register_buffer("image_queue_ptr", torch.zeros(1, dtype=torch.long))
-            
-            if self.text_attack:
-                print("----Loading greedy attack ----")
-                self.greedy_attacker = GreedyAttack_moco(config)
-                print("----Greedy attack Loaded ----")
-            if self.image_attack:
-                self.pgd_attacker = PGDAttack_moco(config)          
+            if self.augmentation : 
+                if self.text_view:
+                    self.max_length = config["max_text_len"]
+                    self.type_txt_augm = config["type_txt_augm"]
+                    self.tokenizer =  BertTokenizer.from_pretrained(config["tokenizer"])
+                    self.tokenizer_pegasus = PegasusTokenizer.from_pretrained('google/pegasus-xsum')
+                    self.pegasus = PegasusForConditionalGeneration.from_pretrained('google/pegasus-xsum')
+            else : 
+                if self.text_view:
+                    print("----Loading greedy attack ----")
+                    self.greedy_attacker = GreedyAttack_moco(config)
+                    print("----Greedy attack Loaded ----")
+                if self.image_view:
+                    self.pgd_attacker = PGDAttack_moco(config)          
                
         if config["loss_names"]["barlowtwins"] > 0:
             self.per_step_bs = config["num_gpus"] * config["num_nodes"] * config["per_gpu_batchsize"]
             self.barlowtwins_head = heads.BarlowTwinsHead(config["hidden_size"], [8192, 8192], 8192)
-            self.text_attack = config["text_attack"]
-            self.image_attack = config["image_attack"]
+            self.text_view = config["text_view"]
+            self.image_view = config["image_view"]
             self.adv_lr = config["adv_lr"]
             self.loss_weight = 0.001
-            if self.text_attack:
-                print("----Loading greedy attack ----")
-                self.greedy_attacker = GreedyAttack_barlowtwins(config)
-                print("----Greedy attack Loaded ----")
-            if self.image_attack:
-                self.pgd_attacker = PGDAttack_bartlowtwins(config)
+            if self.augmentation : 
+                if self.text_view:
+                    self.type_txt_augm = config["type_txt_augm"]
+                    self.tokenizer =  BertTokenizer.from_pretrained(config["tokenizer"])
+                    self.tokenizer_pegasus = PegasusTokenizer.from_pretrained('google/pegasus-xsum')
+                    self.pegasus = PegasusForConditionalGeneration.from_pretrained('google/pegasus-xsum')
+            else :             
+                if self.text_view:
+                    print("----Loading greedy attack ----")
+                    self.greedy_attacker = GreedyAttack_barlowtwins(config)
+                    print("----Greedy attack Loaded ----")
+                if self.image_view:
+                    self.pgd_attacker = PGDAttack_bartlowtwins(config)
         # ===================== Downstream ===================== #
         if (
             self.hparams.config["load_path"] != ""
@@ -160,9 +176,9 @@ class ViLTransformerSS(pl.LightningModule):
             self.token_type_embeddings.weight.data[1, :] = emb_data[1, :]
             self.token_type_embeddings.weight.data[2, :] = emb_data[1, :]   
             #param attacks
-            self.image_attack = config["image_attack"]
-            self.text_attack  = config["text_attack"]
-            if config["text_attack"] : 
+            self.image_view = config["image_view"]
+            self.text_view  = config["text_view"]
+            if config["text_view"] : 
                 self.n_candidates = config["n_candidates"]
                 self.max_loops = config["max_loops"]     
                 self.sim_thred = config["sim_thred"]      
@@ -177,7 +193,7 @@ class ViLTransformerSS(pl.LightningModule):
                                             max_loops    = self.max_loops,    
                                             tokenizer    = self.tokenizer)
                 print("----Greedy GreedyAttack_cross_entropy DONE ----")               
-            if config["image_attack"] : 
+            if config["image_view"] : 
                 self.adv_steps_img = config["adv_steps_img"]  
                 self.adv_lr_img = config["adv_lr_img"]     
                 self.adv_max_norm_img = config["adv_max_norm_img"] 
