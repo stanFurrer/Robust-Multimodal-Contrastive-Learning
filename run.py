@@ -13,14 +13,17 @@ def main(_config):
     print("\n------------------------------")
     if _config["augmentation"] : 
         print("Doing the following text augmentation",_config["type_txt_augm"] ) 
-    if _config["image_view"] : 
-        print("Hyper parameter for pgd")
-        print("adv_lr_img :",_config["adv_lr_img"])
-        print("adv_max_norm_img :",_config["adv_max_norm_img"])
-    if _config["text_view"] :
-        print("\nHyper parameter for Geometric")
-        print("n_candidates :",_config["n_candidates"])
-        print("max_loops :",_config["max_loops"])        
+        print("Text_view set to ", _config["text_view"])
+        print("Image_view set to ",_config["image_view"] )
+    else : 
+        if _config["image_view"] : 
+            print("Hyper parameter for pgd")
+            print("adv_lr_img :",_config["adv_lr_img"])
+            print("adv_max_norm_img :",_config["adv_max_norm_img"])
+        if _config["text_view"] :
+            print("\nHyper parameter for Geometric")
+            print("n_candidates :",_config["n_candidates"])
+            print("max_loops :",_config["max_loops"])        
     print("------------------------------\n")    
         
     #os.environ['MASTER_ADDR'] = 'localhost'

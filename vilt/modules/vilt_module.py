@@ -1,14 +1,14 @@
 #### New
 from attack.greedy_attack_vilt import GreedyAttack_moco, GreedyAttack_barlowtwins
 from attack.pgd_attack_vilt import PGDAttack_moco, PGDAttack_bartlowtwins
-
+from augmentation.image_augmentation import ImageAugmentation
+from augmentation.text_augmentation import TextAugmentation
 import os #
 import time#
 from copy import deepcopy
 from collections import OrderedDict #
 from transformers import BertTokenizer#
 from Geometric_attack.greedy_attack_vilt_cross_entropy import GreedyAttack_cross_entropy #
-from transformers import PegasusForConditionalGeneration, PegasusTokenizer
 ####
 
 import torch
@@ -92,11 +92,9 @@ class ViLTransformerSS(pl.LightningModule):
             self.register_buffer("image_queue_ptr", torch.zeros(1, dtype=torch.long))
             if self.augmentation : 
                 if self.text_view:
-                    self.max_length = config["max_text_len"]
-                    self.type_txt_augm = config["type_txt_augm"]
-                    self.tokenizer =  BertTokenizer.from_pretrained(config["tokenizer"])
-                    self.tokenizer_pegasus = PegasusTokenizer.from_pretrained('google/pegasus-xsum')
-                    self.pegasus = PegasusForConditionalGeneration.from_pretrained('google/pegasus-xsum')
+                    self.text_augmentation = TextAugmentation(config)
+                if self.image_view:   
+                    self.image_augmentation = ImageAugmentation(config)
             else : 
                 if self.text_view:
                     print("----Loading greedy attack ----")
@@ -114,10 +112,9 @@ class ViLTransformerSS(pl.LightningModule):
             self.loss_weight = 0.001
             if self.augmentation : 
                 if self.text_view:
-                    self.type_txt_augm = config["type_txt_augm"]
-                    self.tokenizer =  BertTokenizer.from_pretrained(config["tokenizer"])
-                    self.tokenizer_pegasus = PegasusTokenizer.from_pretrained('google/pegasus-xsum')
-                    self.pegasus = PegasusForConditionalGeneration.from_pretrained('google/pegasus-xsum')
+                    self.text_augmentation = TextAugmentation(config)
+                if self.image_view:   
+                    self.image_augmentation = ImageAugmentation(config)                    
             else :             
                 if self.text_view:
                     print("----Loading greedy attack ----")

@@ -18,8 +18,6 @@ from einops import rearrange
 
 from vilt.modules.dist_utils import all_gather
 
-from augmentation.eda import eda
-
 def cost_matrix_cosine(x, y, eps=1e-5):
     """Compute cosine distnace across every pairs of x, y (batched)
     [B, L_x, D] [B, L_y, D] -> [B, Lx, Ly]"""
@@ -94,33 +92,15 @@ def optimal_transport_dist(
     return distance
 
 def text_augmentation(pl_module, batch):
-    txt_input  = []
-    text_masks = []
-    if pl_module.type_txt_augm == "PEGASUS" : 
-        batch_pegasus = pl_module.tokenizer_pegasus(batch["text"], 
-                                                 truncation=True, padding='longest', return_tensors="pt").to(pl_module.device)
-        translated = pl_module.pegasus.generate(**batch_pegasus).to(pl_module.device)
-        augmented_text = pl_module.tokenizer_pegasus.batch_decode(translated, skip_special_tokens=True)
-        
-    if pl_module.type_txt_augm == "EDA" : 
-        augmented_text = []
-        for i,sentence in enumerate(batch["text"]) : 
-            augmented_text.append(eda(sentence, alpha_sr=0.1, alpha_ri=0.1, alpha_rs=0.1, p_rd=0.1, num_aug=1))
-    
-    #for i,sentence in enumerate(batch["text"]) : 
-    #    print("Original sentence :::", sentence)
-    #    print("Augmented sentence:::", augmented_text[i]) 
-        
-    outputs = pl_module.tokenizer(augmented_text, truncation=True, padding=True, max_length=pl_module.max_length)
-    batch["text"]       = augmented_text
-    batch["text_ids"]  = torch.tensor(outputs["input_ids"]).to(pl_module.device)
-    batch["text_masks"] = torch.tensor(outputs["attention_mask"]).to(pl_module.device)  
-        
+    batch = pl_module.text_augmentation.augmentation(pl_module, batch)
+    return batch
+   
+def image_augmentation(pl_module, batch):    
+    new_images = pl_module.image_augmentation.augmentation(batch)
+    new_images[0] = new_images[0].to(pl_module.device)
+    batch["image"] = new_images
     return batch
     
-def image_augmentation(pl_module, batch):    
-    print("TODO")
-
 def compute_pgd(pl_module, batch, loss_name, k_text=None):
     img_delta = pl_module.pgd_attacker.pgd_attack(pl_module, batch, k_text)
     # add debug code here
@@ -162,7 +142,7 @@ def compute_geometric(pl_module, batch, loss_name, k_image=None):
     return batch #, txt_original_attacked
 
 def compute_moco_contrastive(pl_module, batch):
-    
+
     def _momentum_update_key_layer(em, q_layer, k_layer):
         """
         Momentum update of the key encoder
