@@ -1,6 +1,6 @@
 #### New
-from attack.greedy_attack_vilt import GreedyAttack_moco, GreedyAttack_barlowtwins
-from attack.pgd_attack_vilt import PGDAttack_moco, PGDAttack_bartlowtwins
+from attack.greedy_attack_vilt import GreedyAttack_moco, GreedyAttack_barlowtwins, GreedyAttack_nlvr2
+from attack.pgd_attack_vilt import PGDAttack_moco, PGDAttack_bartlowtwins, PGDAttack_nlvr2
 
 import os
 import time
@@ -99,7 +99,7 @@ class ViLTransformerSS(pl.LightningModule):
                
         if config["loss_names"]["barlowtwins"] > 0:
             self.per_step_bs = config["num_gpus"] * config["num_nodes"] * config["per_gpu_batchsize"]
-            self.barlowtwins_head = heads.BarlowTwinsHead(config["hidden_size"], [8192, 8192], 8192)
+            self.barlowtwins_head = heads.BarlowTwinsHead(config["hidden_size"], [2048, 2048], 2048)
             self.text_attack = config["text_attack"]
             self.image_attack = config["image_attack"]
             self.adv_lr = config["adv_lr"]
@@ -147,12 +147,12 @@ class ViLTransformerSS(pl.LightningModule):
             self.token_type_embeddings.weight.data[2, :] = emb_data[1, :]
             
         if self.hparams.config["loss_names"]["nlvr2_attacked"] > 0:
-            self.nlvr2_classifier = nn.Sequential(OrderedDict([
-                ('linear1_nlvr2', nn.Linear(hs * 2, hs * 2)),
-                ('norm_nlvr2' , nn.LayerNorm(hs * 2)),
-                ('gelu_nlvr2', nn.GELU()),
-                ('linear2_nlvr2',nn.Linear(hs * 2, 2)),
-            ]))
+            self.nlvr2_classifier = nn.Sequential(
+                nn.Linear(hs * 2, hs * 2),
+                nn.LayerNorm(hs * 2),
+                nn.GELU(),
+                nn.Linear(hs * 2, 2),
+            )
             self.nlvr2_classifier.apply(objectives.init_weights)
             emb_data = self.token_type_embeddings.weight.data
             self.token_type_embeddings = nn.Embedding(3, hs)
@@ -164,24 +164,12 @@ class ViLTransformerSS(pl.LightningModule):
             self.image_attack = config["image_attack"]
             self.text_attack = config["text_attack"]
             if config["text_attack"]:
-                self.n_candidates = config["n_candidates"]
-                self.max_loops = config["max_loops"]
-                self.sim_thred = config["sim_thred"]
-                self.cos_sim = config["cos_sim"]
-                self.synonym = config["synonym"]
-                self.embedding_path = config["embedding_path"]
-                self.sim_path = config["sim_path"]
-                self.tokenizer= BertTokenizer.from_pretrained('bert-base-uncased')
                 print("----Loading GreedyAttack_cross_entropy ----")
-                self.greedy_attacker = GreedyAttack_cross_entropy(args = config,
-                                            n_candidates = self.n_candidates,
-                                            max_loops    = self.max_loops,
-                                            tokenizer    = self.tokenizer)
+                self.greedy_attacker = GreedyAttack_nlvr2(config)
                 print("----Greedy GreedyAttack_cross_entropy DONE ----")
             if config["image_attack"]:
-                self.adv_steps_img = config["adv_steps_img"]
-                self.adv_lr_img = config["adv_lr_img"]
-                self.adv_max_norm_img = config["adv_max_norm_img"]
+                self.attack_idx = config["attack_idx"]
+                self.pgd_attacker = PGDAttack_nlvr2(config)
 
         if self.hparams.config["loss_names"]["irtr"] > 0:
             self.rank_output = nn.Linear(hs, 1)

@@ -96,24 +96,33 @@ def optimal_transport_dist(
 def compute_pgd(pl_module, batch, loss_name, k_text=None):
     img_delta = pl_module.pgd_attacker.pgd_attack(pl_module, batch, k_text)
     # add debug code here
-    batch["image"][0] = batch["image"][0] + img_delta
-    
+    if loss_name == "nlvr2_attacked":
+        batch["image_0"][0] = batch["image_0"][0] + img_delta[0]
+        batch["image_1"][0] = batch["image_1"][0] + img_delta[1]
+    else:
+        batch["image"][0] = batch["image"][0] + img_delta
+
     phase = "train" if pl_module.training else "val"
-    delta_range = torch.linalg.norm(img_delta, dim=1).mean()
+    if loss_name == "nlvr2_attacked":
+        delta_range_0 = torch.linalg.norm(img_delta[0], dim=1).mean()
+        delta_range_1 = torch.linalg.norm(img_delta[1], dim=1).mean()
+        delta_range = (delta_range_0 + delta_range_1) / sum(pl_module.attack_idx)
+    else:
+        delta_range = torch.linalg.norm(img_delta, dim=1).mean()
     pl_module.log(f"{loss_name}_attack/{phase}/delta", delta_range)
     
     return batch
 
 
 def compute_geometric(pl_module, batch, loss_name, k_image=None):
-    real_sentence = batch["text"]
+    # real_sentence = batch["text"]
     attack_words = pl_module.greedy_attacker.adv_attack_samples(pl_module, batch, k_image)
     
-    print("This is the Real versus attacked sentences : ")
+    # print("This is the Real versus attacked sentences : ")
     
-    for i in range(len(batch["text"])):
-        print("Real sentence----: ", real_sentence[i])
-        print("Attacked sentence: ", attack_words["text"][i])
+    # for i in range(len(batch["text"])):
+    #     print("Real sentence----: ", real_sentence[i])
+    #     print("Attacked sentence: ", attack_words["text"][i])
     
     # txt_original_attacked   = {"original": real_sentence,
     #                            "attacked": attack_words["text"]
@@ -666,6 +675,7 @@ def compute_vqa(pl_module, batch):
 
     return ret
 
+
 def compute_pgd_finetuning(pl_module,batch,loss_name) :
     img_delta_dict     = {}
     img_init           = {}
@@ -716,6 +726,7 @@ def compute_pgd_finetuning(pl_module,batch,loss_name) :
     pl_module.log(f"{loss_name}/{phase}/delta", delta_range)
     return batch,img_delta_dict
 
+
 def compute_geometric_finetuning(pl_module, batch,loss_name) :
     
     real_sentence = batch["text"]
@@ -745,72 +756,50 @@ def compute_geometric_finetuning(pl_module, batch,loss_name) :
     
     return batch,txt_original_attacked
 
-saving = 99
+
 def compute_nlvr2_attack(pl_module, batch):
-    global saving
-    saving +=1
+    ret = {}
+    
+    infer1 = pl_module.infer(batch, mask_text=False, mask_image=False, image_token_type_idx=1)
+    infer2 = pl_module.infer(batch, mask_text=False, mask_image=False, image_token_type_idx=2)
+    # NlVR2 output clean
+    cls_feats = torch.cat([infer1["cls_feats"], infer2["cls_feats"]], dim=-1)
+    ori_logits = pl_module.nlvr2_classifier(cls_feats)
     nlvr2_labels = batch["answers"]
     nlvr2_labels = torch.tensor(nlvr2_labels).to(pl_module.device).long()
+    ori_loss = F.cross_entropy(ori_logits, nlvr2_labels)
+    ret["nlvr2_original_logits"] = ori_logits
+    ret["nlvr2_original_loss"] = ori_loss
     
-    infer1 = pl_module.infer(
-        batch,mask_text=False, mask_image=False, image_token_type_idx=1
-    )
-    infer2 = pl_module.infer(
-        batch,mask_text=False, mask_image=False, image_token_type_idx=2
-    )
-    # NlVR2 output clean
-    cls_feats    = torch.cat([infer1["cls_feats"], infer2["cls_feats"]], dim=-1)
-    nlvr2_logits = pl_module.nlvr2_classifier(cls_feats)
-    
-    if pl_module.image_attack : 
+    attack_batch = None
+    if pl_module.image_attack:
+        attacked_batch = compute_pgd(pl_module, deepcopy(batch), "nlvr2_attacked")
         
-        batch_attacked,img_delta_dict = \
-            compute_pgd_finetuning(pl_module,deepcopy(batch),"nlvr2_attacked")
-        
-        infer1_a = pl_module.infer(
-            batch_attacked,mask_text=False, mask_image=False,image_token_type_idx=1
-        )
-        infer2_a = pl_module.infer(
-            batch_attacked,mask_text=False, mask_image=False,image_token_type_idx=2
-        )
+        infer1_a = pl_module.infer(attacked_batch, mask_text=False, mask_image=False, image_token_type_idx=1)
+        infer2_a = pl_module.infer(attacked_batch, mask_text=False, mask_image=False, image_token_type_idx=2)
         cls_feats = torch.cat([infer1_a["cls_feats"], infer2_a["cls_feats"]], dim=-1)
-        nlvr2_logits_a = pl_module.nlvr2_classifier(cls_feats)
-        nlvr2_loss_a   = F.cross_entropy(nlvr2_logits_a, nlvr2_labels)
-        ## Save img_delta
-        save_path ="/itet-stor/sfurrer/net_scratch/UNITER/ViLT/attacks_analysis/PGD"
-        if saving %100 == 0 :
-            with open(os.path.join(save_path,'img_delta_dict{}_max_norm_{}_lr_{}.pkl'\
-                .format(saving,pl_module.adv_max_norm_img,pl_module.adv_lr_img)), 'wb') as fp:
-                        pickle.dump(img_delta_dict, fp, protocol=pickle.HIGHEST_PROTOCOL)
-    if pl_module.text_attack :
-        
-        batch_attacked,txt_original_attacked = \
-        compute_geometric_finetuning(pl_module, deepcopy(batch),"nlvr2_attacked")
-        
-        infer1_a = pl_module.infer(
-            batch_attacked,mask_text=False, mask_image=False,image_token_type_idx=1
-        )
-        infer2_a = pl_module.infer(
-            batch_attacked,mask_text=False, mask_image=False,image_token_type_idx=2
-        )
-        cls_feats = torch.cat([infer1_a["cls_feats"], infer2_a["cls_feats"]], dim=-1)
-        nlvr2_logits_a = pl_module.nlvr2_classifier(cls_feats)
-        nlvr2_loss_a = F.cross_entropy(nlvr2_logits_a, nlvr2_labels)    
-        ## Save txt_original_attacked
-        save_path ="/itet-stor/sfurrer/net_scratch/UNITER/ViLT/attacks_analysis/Geom"
-        if saving %100 == 0 :
-            with open(os.path.join(save_path,'txt_original_attacked{}_candidate_{}_loop_{}.pkl'\
-                .format(saving,pl_module.n_candidates,pl_module.max_loops)), 'wb') as fp:
-                        pickle.dump(txt_original_attacked, fp, protocol=pickle.HIGHEST_PROTOCOL)
-    ret = {
-        "nlvr2_attacked_loss": nlvr2_loss_a,
-        "nlvr2_attacked_logits": nlvr2_logits_a,
-        "nlvr2_logits": nlvr2_logits,
-        "nlvr2_attacked_labels": nlvr2_labels,
-    }
+        nlvr2_logits = pl_module.nlvr2_classifier(cls_feats)
+        nlvr2_loss = F.cross_entropy(nlvr2_logits, nlvr2_labels)
 
+        ret["nlvr2_attacked_logits"] = nlvr2_logits
+        ret["nlvr2_attacked_loss"] = nlvr2_loss
+
+    if pl_module.text_attack:
+        now_batch = attack_batch if attack_batch is not None else batch
+        attacked_batch = compute_geometric(pl_module, deepcopy(now_batch), "nlvr2_attacked")
+        
+        infer1_a = pl_module.infer(attacked_batch, mask_text=False, mask_image=False, image_token_type_idx=1)
+        infer2_a = pl_module.infer(attacked_batch, mask_text=False, mask_image=False, image_token_type_idx=2)
+        cls_feats = torch.cat([infer1_a["cls_feats"], infer2_a["cls_feats"]], dim=-1)
+        nlvr2_logits = pl_module.nlvr2_classifier(cls_feats)
+        nlvr2_loss = F.cross_entropy(nlvr2_logits, nlvr2_labels)
+
+        ret["nlvr2_attacked_logits"] = nlvr2_logits
+        ret["nlvr2_attacked_loss"] = nlvr2_loss
+        
     phase = "train" if pl_module.training else "val"
     if phase == "train":
+        # there may be some bugs, but so far I just want to evaluation
         loss = getattr(pl_module, f"{phase}_nlvr2_attacked_loss")(ret["nlvr2_attacked_loss"])
         acc = getattr(pl_module, f"{phase}_nlvr2_attacked_accuracy")(
             ret["nlvr2_attacked_logits"], ret["nlvr2_attacked_labels"]
@@ -822,35 +811,44 @@ def compute_nlvr2_attack(pl_module, batch):
         test_batches = [i for i, n in enumerate(batch["table_name"]) if "test" in n]
 
         if dev_batches:
-            dev_loss = getattr(pl_module, f"dev_nlvr2_attacked_loss")(
-                F.cross_entropy(
-                    ret["nlvr2_attacked_logits"][dev_batches], ret["nlvr2_attacked_labels"][dev_batches]
+            dev_loss = getattr(pl_module, f"dev_nlvr2_original_loss")(
+                F.cross_entropy(ret["nlvr2_original_logits"][dev_batches], nlvr2_labels[dev_batches])
+            )
+            dev_acc = getattr(pl_module, f"dev_nlvr2_original_accuracy")(
+                ret["nlvr2_original_logits"][dev_batches], nlvr2_labels[dev_batches]
+            )
+            pl_module.log(f"nlvr2_original/dev/loss", dev_loss)
+            pl_module.log(f"nlvr2_original/dev/accuracy", dev_acc)
+            if pl_module.image_attack or pl_module.text_attack:
+                dev_loss = getattr(pl_module, f"dev_nlvr2_attacked_loss")(
+                    F.cross_entropy(ret["nlvr2_attacked_logits"][dev_batches], nlvr2_labels[dev_batches])
                 )
-            )
-            dev_acc = getattr(pl_module, f"dev_nlvr2_attacked_accuracy")(
-                ret["nlvr2_attacked_logits"][dev_batches], ret["nlvr2_attacked_labels"][dev_batches]
-            )
-            pl_module.log(f"nlvr2_attacked/dev/loss", dev_loss)
-            pl_module.log(f"nlvr2_attacked/dev/accuracy", dev_acc)
+                dev_acc = getattr(pl_module, f"dev_nlvr2_attacked_accuracy")(
+                    ret["nlvr2_attacked_logits"][dev_batches], nlvr2_labels[dev_batches]
+                )
+                pl_module.log(f"nlvr2_attacked/dev/loss", dev_loss)
+                pl_module.log(f"nlvr2_attacked/dev/accuracy", dev_acc)
         if test_batches:
-            test_loss = getattr(pl_module, f"test_nlvr2_attacked_loss")(
-                F.cross_entropy(
-                    ret["nlvr2_attacked_logits"][test_batches], ret["nlvr2_attacked_labels"][test_batches]
+            test_loss = getattr(pl_module, f"test_nlvr2_original_loss")(
+                F.cross_entropy(ret["nlvr2_original_logits"][test_batches], nlvr2_labels[test_batches])
+            )
+            test_acc = getattr(pl_module, f"test_nlvr2_original_accuracy")(
+                ret["nlvr2_original_logits"][test_batches], nlvr2_labels[test_batches]
+            )
+            pl_module.log(f"nlvr2_original/test/loss", test_loss)
+            pl_module.log(f"nlvr2_original/test/accuracy", test_acc)
+            if pl_module.image_attack or pl_module.text_attack:
+                test_loss = getattr(pl_module, f"test_nlvr2_attacked_loss")(
+                    F.cross_entropy(ret["nlvr2_attacked_logits"][test_batches], nlvr2_labels[test_batches])
                 )
-            )
-            test_acc = getattr(pl_module, f"test_nlvr2_attacked_accuracy")(
-                ret["nlvr2_attacked_logits"][test_batches], ret["nlvr2_attacked_labels"][test_batches]
-            )
-            change_rate_cross = getattr(pl_module, f"test_nlvr2_attacked_change_rate_cross")(
-                ret["nlvr2_attacked_logits"][test_batches], ret["nlvr2_logits"][test_batches],
-                ret["nlvr2_attacked_labels"][test_batches]
-            )
-          
-            pl_module.log(f"nlvr2_attacked/test/loss", test_loss)
-            pl_module.log(f"nlvr2_attacked/test/accuracy", test_acc)
-            pl_module.log(f"nlvr2_attacked/test/change_rate_cross", change_rate_cross)
-
+                test_acc = getattr(pl_module, f"test_nlvr2_attacked_accuracy")(
+                    ret["nlvr2_attacked_logits"][test_batches], nlvr2_labels[test_batches]
+                )
+                pl_module.log(f"nlvr2_attacked/test/loss", test_loss)
+                pl_module.log(f"nlvr2_attacked/test/accuracy", test_acc)
+                
     return ret
+
 
 def compute_nlvr2(pl_module, batch):
     infer1 = pl_module.infer(

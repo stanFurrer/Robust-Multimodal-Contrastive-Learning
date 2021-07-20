@@ -80,6 +80,7 @@ def config():
     adv_steps_img = 5
     adv_lr_img = 0.5
     adv_max_norm_img = 0.1
+    attack_idx = [False, False]
     #Geometric
     n_candidates = 10
     max_loops = 10
@@ -125,7 +126,7 @@ def task_moco():
     momentum = 0.999
     temperature = 0.07
     text_attack = True
-    image_attack = False
+    image_attack = True
     loss_names = _loss_names({"moco": 1})
     # batch_size = 4096
     batch_size = 128
@@ -134,12 +135,12 @@ def task_moco():
     test_only = False
     # Attacks parameters
     # PGD
-    adv_steps_img = 3
-    adv_lr_img = 0.5
+    adv_steps_img = 5
+    adv_lr_img = 0.7
     adv_max_norm_img = 0.1
     #Geometric
     n_candidates = 10
-    max_loops = 7
+    max_loops = 4
     sim_thred = 0.5
     cos_sim = True
     synonym = "cos_sim"
@@ -157,7 +158,7 @@ def task_barlowtwins():
     image_attack = True
     loss_names = _loss_names({"barlowtwins": 1})
     adv_lr = 0.0051
-    batch_size = 32
+    batch_size = 64
     max_epoch = 10
     max_image_len = 200
     test_only = False
@@ -168,7 +169,7 @@ def task_barlowtwins():
     adv_max_norm_img = 0.1
     # Geometric
     n_candidates = 10
-    max_loops = 7
+    max_loops = 4
     sim_thred = 0.5
     cos_sim = True
     synonym = "cos_sim"
@@ -246,16 +247,18 @@ def task_finetune_nlvr2_randaug_attacked():
     warmup_steps = 0.1
     draw_false_image = 0
     learning_rate = 1e-4
+    test_only = True
     # Attacks parameters
     text_attack = True
-    image_attack = False
+    image_attack = True
     # PGD
     adv_steps_img = 5
     adv_lr_img = 0.7
     adv_max_norm_img = 0.2
+    attack_idx = [False, True]
     #Geometric
     n_candidates = 10
-    max_loops = 10
+    max_loops = 4
     sim_thred = 0.5
     cos_sim = True
     synonym = "cos_sim"

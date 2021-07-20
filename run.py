@@ -39,6 +39,7 @@ def main(_config):
         mode="max",
         save_last=True,
     )
+    '''
     if _config["image_attack"] :
         logger = pl.loggers.TensorBoardLogger(
             _config["log_dir"],
@@ -54,6 +55,11 @@ def main(_config):
             _config["log_dir"],
             name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}',
         )
+    '''
+    logger = pl.loggers.TensorBoardLogger(
+        _config["log_dir"],
+        name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}',
+    )
         
     lr_callback = pl.callbacks.LearningRateMonitor(logging_interval="step")
     callbacks = [checkpoint_callback, lr_callback]
