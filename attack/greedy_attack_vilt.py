@@ -174,7 +174,10 @@ class GreedyAttack:
             x[:, : text_embeds.shape[1]],
             x[:, text_embeds.shape[1]:],
         )
-        cls_feats = self.pooler(x)
+        if self.pooler is not None:
+            cls_feats = self.pooler(x)
+        else:
+            cls_feats = None
     
         ret = {
             "text_feats": text_feats,
