@@ -204,7 +204,7 @@ def compute_moco_contrastive(pl_module, batch):
         infer = pl_module.infer(augmented_batch, mask_text=False, mask_image=False)
         image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
         q = nn.functional.normalize(image_representation_q, dim=1)
-
+        original_text = nn.functional.normalize(text_representation_q, dim=1)
         # attacked image: close to the same image before attack; away from different images.
         neg_img = pl_module.image_queue.clone().detach()
         l_pos = torch.einsum('nc,nc->n', [q, k_image]).unsqueeze(-1)
@@ -245,9 +245,9 @@ def compute_moco_contrastive(pl_module, batch):
         # ret["image_text_labels"] = labels
 
         loss = loss + loss_fct(logits.float(), labels.long())
-        
+        loss_image = loss
         loss_num += 1
-
+        ret["moco_loss_image"] = loss_image / 2
     if pl_module.text_view:
         if pl_module.augmentation : 
             augmented_batch = text_augmentation(pl_module, deepcopy(batch))
@@ -256,7 +256,7 @@ def compute_moco_contrastive(pl_module, batch):
         infer = pl_module.infer(augmented_batch, mask_text=False, mask_image=False)
         image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
         q = nn.functional.normalize(text_representation_q, dim=1)
-
+        original_image = nn.functional.normalize(image_representation_q, dim=1)
         # attacked text: close to the same text; away from different text
         neg_txt = pl_module.text_queue.clone().detach()
         l_pos = torch.einsum('nc,nc->n', [q, k_text]).unsqueeze(-1)
@@ -274,7 +274,7 @@ def compute_moco_contrastive(pl_module, batch):
         ret["text_text_neg_dist"] = dist / q.shape[0]
         # ret["text_text_logits"] = logits
         # ret["text_text_labels"] = labels
-
+        loss_text = loss_fct(logits.float(), labels.long())
         loss = loss + loss_fct(logits.float(), labels.long())
         loss_num += 1
 
@@ -297,9 +297,10 @@ def compute_moco_contrastive(pl_module, batch):
         # ret["text_image_neg_dist"] = torch.linalg.norm(q-neg_img, dim=1).mean()
         # ret["text_image_logits"] = logits
         # ret["text_image_labels"] = labels
-
+        loss_text = loss_text + loss_fct(logits.float(), labels.long())
         loss = loss + loss_fct(logits.float(), labels.long())
         loss_num += 1
+        ret["moco_loss_text"] = loss_text / 2
     _dequeue_and_enqueue(k_text, 'text')
     _dequeue_and_enqueue(k_image, 'image')
 
@@ -307,18 +308,34 @@ def compute_moco_contrastive(pl_module, batch):
     
     phase = "train" if pl_module.training else "val"
     loss = getattr(pl_module, f"{phase}_moco_loss")(ret["moco_loss"])
-    pl_module.log(f"moco/{phase}/loss", loss)
-    if pl_module.image_view:    
-        img_img_dist = getattr(pl_module, f"{phase}_moco_img_img_dist")(ret["image_image_neg_dist"] - ret["image_image_pos_dist"])
-        pl_module.log(f"moco/{phase}/img_img_dist", img_img_dist)
-        img_txt_dist = getattr(pl_module, f"{phase}_moco_img_txt_dist")(ret["image_text_neg_dist"] - ret["image_text_pos_dist"])
-        pl_module.log(f"moco/{phase}/img_txt_dist", img_txt_dist)
-    if pl_module.text_view:
-        txt_txt_dist = getattr(pl_module, f"{phase}_moco_txt_txt_dist")(ret["text_text_neg_dist"] - ret["text_text_pos_dist"])
-        pl_module.log(f"moco/{phase}/txt_txt_dist", txt_txt_dist)
-        txt_img_dist = getattr(pl_module, f"{phase}_moco_txt_img_dist")(ret["text_image_neg_dist"] - ret["text_image_pos_dist"])
-        pl_module.log(f"moco/{phase}/txt_img_dist", txt_img_dist)
+    pl_module.log(f"moco_loss/step/{phase}", loss)
     
+    if pl_module.text_view and pl_module.image_view:
+        pl_module.log(f"moco_dist_{phase}/img_txt_dist", torch.linalg.norm(original_image - original_text, dim=1).mean())
+    
+    if pl_module.image_view:
+        loss_image = getattr(pl_module, f"{phase}_moco_loss_image")(ret["moco_loss_image"])
+        pl_module.log(f"moco/{phase}/_moco_loss_image", loss_image)            
+        
+        pl_module.log(f"moco_dist_{phase}_img_img/img_img_pos_dist", ret["image_image_pos_dist"])
+        pl_module.log(f"moco_dist_{phase}_img_img/img_img_neg_dist", ret["image_image_neg_dist"])
+        pl_module.log(f"moco_dist_{phase}_img_img/img_img_difference", ret["image_image_neg_dist"] - ret["image_image_pos_dist"])
+
+        pl_module.log(f"moco_dist_{phase}_img_txt/img_txt_pos_dist", ret["image_text_pos_dist"])
+        pl_module.log(f"moco_dist_{phase}_img_txt/img_txt_neg_dist", ret["image_text_neg_dist"])
+        pl_module.log(f"moco_dist_{phase}_img_txt/img_txt_difference", ret["image_text_neg_dist"] - ret["image_text_pos_dist"])
+
+    if pl_module.text_view:
+        loss_text = getattr(pl_module, f"{phase}_moco_loss_text")(ret["moco_loss_text"])
+        pl_module.log(f"moco/{phase}/_moco_loss_text", loss_text)          
+        pl_module.log(f"moco_dist_{phase}_txt_txt/txt_txt_pos_dist", ret["text_text_pos_dist"])
+        pl_module.log(f"moco_dist_{phase}_txt_txt/txt_txt_neg_dist", ret["text_text_neg_dist"])
+        pl_module.log(f"moco_dist_{phase}_txt_txt/txt_txt_difference", ret["text_text_neg_dist"] - ret["text_text_pos_dist"])
+
+        pl_module.log(f"moco_dist_{phase}_txt_img/txt_img_pos_dist", ret["text_image_pos_dist"])
+        pl_module.log(f"moco_dist_{phase}_txt_img/txt_img_neg_dist", ret["text_image_neg_dist"])
+        pl_module.log(f"moco_dist_{phase}_txt_img/txt_img_difference", ret["text_image_neg_dist"] - ret["text_image_pos_dist"])
+
     return ret
 
 def compute_barlowtwins_contrastive(pl_module, batch):

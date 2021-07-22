@@ -46,6 +46,7 @@ def main(_config):
         mode="max",
         save_last=True,
     )
+    """
     if _config["image_view"] : 
         logger = pl.loggers.TensorBoardLogger(
             _config["log_dir"],
@@ -56,11 +57,12 @@ def main(_config):
             _config["log_dir"],
             name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}_candidate{_config["n_candidates"]}_loop{_config["max_loops"]}',
         )        
-    else : 
-        logger = pl.loggers.TensorBoardLogger(
-            _config["log_dir"],
-            name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}',
-        )         
+    """
+    #else : 
+    logger = pl.loggers.TensorBoardLogger(
+        _config["log_dir"],
+        name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}',
+    )         
         
     lr_callback = pl.callbacks.LearningRateMonitor(logging_interval="step")
     callbacks = [checkpoint_callback, lr_callback]
