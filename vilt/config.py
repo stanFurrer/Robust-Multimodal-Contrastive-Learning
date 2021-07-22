@@ -129,7 +129,7 @@ def task_moco():
     num_beams = 20
     num_return_sequences = 20
     text_view = True
-    image_view = False
+    image_view = True
     type_txt_augm = ["PEGASUS","EDA"] # EDA, PEGASUS    
     loss_names = _loss_names({"moco": 1})
     # batch_size = 4096
@@ -160,7 +160,7 @@ def task_barlowtwins():
     augmentation = True
     num_beams = 20
     num_return_sequences = 20
-    text_view = False
+    text_view = True
     image_view = True
     type_txt_augm = ["PEGASUS","EDA"] # EDA, PEGASUS      
     loss_names = _loss_names({"barlowtwins": 1})

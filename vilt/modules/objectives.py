@@ -245,6 +245,7 @@ def compute_moco_contrastive(pl_module, batch):
         # ret["image_text_labels"] = labels
 
         loss = loss + loss_fct(logits.float(), labels.long())
+        
         loss_num += 1
 
     if pl_module.text_view:
@@ -299,7 +300,6 @@ def compute_moco_contrastive(pl_module, batch):
 
         loss = loss + loss_fct(logits.float(), labels.long())
         loss_num += 1
-
     _dequeue_and_enqueue(k_text, 'text')
     _dequeue_and_enqueue(k_image, 'image')
 
