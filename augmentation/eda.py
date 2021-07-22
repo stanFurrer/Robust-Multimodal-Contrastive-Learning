@@ -72,7 +72,6 @@ def synonym_replacement(words, n):
         if len(synonyms) >= 1:
             synonym = random.choice(list(synonyms))
             new_words = [synonym if word == random_word else word for word in new_words]
-            #print("replaced", random_word, "with", synonym)
             num_replaced += 1
         if num_replaced >= n: #only replace up to n words
             break
@@ -137,14 +136,19 @@ def random_swap(words, n):
     return new_words
 
 def swap_word(new_words):
-    random_idx_1 = random.randint(0, len(new_words)-1)
-    random_idx_2 = random_idx_1
-    counter = 0
-    while random_idx_2 == random_idx_1:
-        random_idx_2 = random.randint(0, len(new_words)-1)
-        counter += 1
-        if counter > 3:
-            return new_words
+    change = False
+    while True :     
+        random_idx_1 = random.randint(0, len(new_words)-1)
+        random_idx_2 = random_idx_1
+        counter = 0
+        while random_idx_2 == random_idx_1:
+            random_idx_2 = random.randint(0, len(new_words)-1)
+            counter += 1
+            if counter > 3:
+                return new_words
+        if new_words[random_idx_2] !=new_words[random_idx_1] : 
+            break
+
     new_words[random_idx_1], new_words[random_idx_2] = new_words[random_idx_2], new_words[random_idx_1] 
     return new_words
 
@@ -176,41 +180,59 @@ def add_word(new_words):
 # main data augmentation function
 ########################################################################
 
-def eda(sentence, alpha_sr=0.1, alpha_ri=0.1, alpha_rs=0.1, p_rd=0.1, num_aug=1):
+def eda(sentence, alpha_sr=0.1, alpha_ri=0.1, alpha_rs=0.1, p_rd=0.1, num_aug=1,original=False):
     sentence = get_only_chars(sentence)
     words = sentence.split(' ')
     words = [word for word in words if word != '']
     num_words = len(words)
 
-    #augmented_sentences = []
-    list_augmentation =["SR","RI","RS","RD"]
-    random_augmentation = random.choice(list_augmentation)
-    
-    if random_augmentation=="SR" : 
+    augmented_sentences = []
+    num_new_per_technique = int(num_aug/4)+1
+
+    #sr
+
+    if (alpha_sr > 0):
         n_sr = max(1, int(alpha_sr*num_words))
-        a_words = synonym_replacement(words, n_sr)
-        a_words.append(".")
-        augmented_sentences = ' '.join(a_words)
-        #augmented_sentences.append(' '.join(a_words))
+        for _ in range(num_new_per_technique):
+            a_words = synonym_replacement(words, n_sr)
+            a_words.append(".")
+            augmented_sentences.append(' '.join(a_words))
 
-    if random_augmentation=="RI" : 
+    #ri
+    if (alpha_ri > 0):
         n_ri = max(1, int(alpha_ri*num_words))
-        a_words = random_insertion(words, n_ri)
-        a_words.append(".")
-        augmented_sentences = ' '.join(a_words)
-        #augmented_sentences.append(' '.join(a_words))
+        for _ in range(num_new_per_technique):
+            a_words = random_insertion(words, n_ri)
+            a_words.append(".")         
+            augmented_sentences.append(' '.join(a_words))
 
-    if random_augmentation=="RS" :
+    #rs
+    if (alpha_rs > 0):
         n_rs = max(1, int(alpha_rs*num_words))
-        a_words = random_swap(words, n_rs)
-        a_words.append(".")      
-        augmented_sentences = ' '.join(a_words)
-        #augmented_sentences.append(' '.join(a_words))
+        for _ in range(num_new_per_technique):
+            a_words = random_swap(words, n_rs)
+            a_words.append(".")          
+            augmented_sentences.append(' '.join(a_words))
 
-    if random_augmentation=="RD" :
-        a_words = random_deletion(words, p_rd)
-        a_words.append(".")
-        augmented_sentences = ' '.join(a_words)
-        #augmented_sentences.append(' '.join(a_words))
+    #rd
+    if (p_rd > 0):
+        for _ in range(num_new_per_technique):
+            a_words = random_deletion(words, p_rd)
+            a_words.append(".")          
+            augmented_sentences.append(' '.join(a_words))
+
+    augmented_sentences = [get_only_chars(sentence) for sentence in augmented_sentences]
+    random.shuffle(augmented_sentences)
+
+    #trim so that we have the desired number of augmented sentences
+    if num_aug >= 1:
+        augmented_sentences = augmented_sentences[:num_aug]
+    else:
+        keep_prob = num_aug / len(augmented_sentences)
+        augmented_sentences = [s for s in augmented_sentences if random.uniform(0, 1) < keep_prob]
+
+    #append the original sentence
+    if original == True : 
+        augmented_sentences.append(sentence)
     
     return augmented_sentences

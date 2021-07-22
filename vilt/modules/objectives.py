@@ -142,7 +142,6 @@ def compute_geometric(pl_module, batch, loss_name, k_image=None):
     return batch #, txt_original_attacked
 
 def compute_moco_contrastive(pl_module, batch):
-
     def _momentum_update_key_layer(em, q_layer, k_layer):
         """
         Momentum update of the key encoder

@@ -6,13 +6,15 @@ from vilt.config import ex
 from vilt.modules.vilt_module import ViLTransformerSS
 from vilt.datamodules.multitask_datamodule import MTDataModule
 
+# Solve issue : #5486 in huggingface/transformer
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 @ex.automain
 def main(_config):
     _config = copy.deepcopy(_config)
     print("\n------------------------------")
     if _config["augmentation"] : 
-        print("Doing the following text augmentation",_config["type_txt_augm"] ) 
+        #print("Doing the following text augmentation",_config["type_txt_augm"] ) 
         print("Text_view set to ", _config["text_view"])
         print("Image_view set to ",_config["image_view"] )
     else : 

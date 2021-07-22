@@ -70,7 +70,9 @@ def config():
     text_view = False
     image_view = False
     augmentation = False
-    type_txt_augm = "PEGASUS" # EDA, PEGASUS
+    num_beams = 20
+    num_return_sequences = 20    
+    type_txt_augm = ["PEGASUS","EDA"] # EDA, PEGASUS
     momentum = 1.0
     temperature = 1.0
     adv_lr = 0.0051
@@ -124,9 +126,11 @@ def task_moco():
     momentum = 0.999
     temperature = 0.07
     augmentation = True
+    num_beams = 20
+    num_return_sequences = 20
     text_view = True
-    image_view = True
-    type_txt_augm = "PEGASUS" # EDA, PEGASUS    
+    image_view = False
+    type_txt_augm = ["PEGASUS","EDA"] # EDA, PEGASUS    
     loss_names = _loss_names({"moco": 1})
     # batch_size = 4096
     batch_size = 128
@@ -153,8 +157,12 @@ def task_barlowtwins():
     exp_name = "barlowtwins"
     # datasets = ["coco", "vg", "sbu", "gcc"]
     datasets = ["coco"]
+    augmentation = True
+    num_beams = 20
+    num_return_sequences = 20
     text_view = False
     image_view = True
+    type_txt_augm = ["PEGASUS","EDA"] # EDA, PEGASUS      
     loss_names = _loss_names({"barlowtwins": 1})
     adv_lr = 0.0051
     batch_size = 256
