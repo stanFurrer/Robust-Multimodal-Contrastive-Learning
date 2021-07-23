@@ -21,7 +21,7 @@ class PGDAttack:
         raise NotImplementedError(f"Build_mini_vilt of {self.contrastive_framework} isn't implemented.")
     def vilt_zero_grad(self):
         raise NotImplementedError(f"vilt_zero_grad of {self.contrastive_framework} isn't implemented.")
-    def pgd_attack(self, pl_module, batch, k_text):
+    def pgd_attack(self, pl_module, batch, k_image):
         raise NotImplementedError(f"pgd_attack of {self.contrastive_framework} isn't implemented.")
 
     def infer(
@@ -125,7 +125,7 @@ class PGDAttack_moco(PGDAttack):
         self.token_type_embeddings.zero_grad()
         self.moco_head.zero_grad()
     
-    def pgd_attack(self, pl_module, batch, k_text):
+    def pgd_attack(self, pl_module, batch, k_image):
         self.build_mini_vilt(pl_module)
         loss_fct = nn.CrossEntropyLoss()
         # Get the original img
@@ -146,7 +146,7 @@ class PGDAttack_moco(PGDAttack):
                     print("problem in step ", astep)
                     sys.exit("STOPP")
                 # RMCL Loss
-                l_pos = torch.einsum('nc,nc->n', [q_attacked, k_text]).unsqueeze(-1)
+                l_pos = torch.einsum('nc,nc->n', [q_attacked, k_image]).unsqueeze(-1)
                 l_neg = torch.einsum('nc,ck->nk', [q_attacked, self.pl_module.image_queue.clone().detach()])
                 logits = torch.cat([l_pos, l_neg], dim=1)
                 logits /= self.pl_module.temperature
@@ -191,7 +191,7 @@ class PGDAttack_bartlowtwins(PGDAttack):
         self.token_type_embeddings.zero_grad()
         self.barlowtwins_head.zero_grad()
     
-    def pgd_attack(self, pl_module, batch, k_text=None):
+    def pgd_attack(self, pl_module, batch, k_image):
         
         def off_diagonal(x):
             n, m = x.shape
@@ -210,9 +210,9 @@ class PGDAttack_bartlowtwins(PGDAttack):
             with torch.enable_grad():
                 batch['image'][0] = (img_init + img_delta)  # .to(pl_module.device)
                 infer = self.infer(batch, mask_text=False, mask_image=False)
-                image_representation, text_representation = self.barlowtwins_head(infer['image_feats'], infer['text_feats'])
-                # RMCL Loss
-                c = image_representation.T @ text_representation
+                image_representation, _ = self.barlowtwins_head(infer['image_feats'], infer['text_feats'])
+                # c = image_representation.T @ k_image
+                c = torch.mm(image_representation.T, k_image) / image_representation.shape[0]
 
                 # c.div_(pl_module.per_step_bs)
                 # torch.distributed.all_reduce(c)
@@ -220,7 +220,8 @@ class PGDAttack_bartlowtwins(PGDAttack):
                 on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
                 off_diag = off_diagonal(c).pow_(2).sum()
 
-                loss = (on_diag + pl_module.adv_lr * off_diag) / self.adv_steps_img * pl_module.loss_weight
+                loss = (on_diag + pl_module.adv_lr * off_diag) / self.adv_steps_img  # * pl_module.loss_weight
+                # print("loss", loss)
                 # calculate x.grad
                 loss.backward()
             # Get gradient
