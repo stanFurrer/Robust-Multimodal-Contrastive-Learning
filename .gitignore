@@ -33,3 +33,10 @@ TXT_ATTACK_NLVR2.sh
 attacks_analysis/
 old_code.py
 vilt/modules/vilt_module_correct.py
+.ipynb_checkpoints/
+AUGMENT_MOCO.sh
+attack/counter-fitted-vectors.txt
+attack/greedy_attack_vilt_clean_14_07.py
+augmentation/text_augmentation_40samples.py
+pegasus_test.py
+test_ViLT.ipynb
