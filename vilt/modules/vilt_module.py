@@ -65,6 +65,7 @@ class ViLTransformerSS(pl.LightningModule):
             self.mpp_score.apply(objectives.init_weights)
 
         if config["loss_names"]["moco"] > 0:
+            self.tsne_vizualisation = config["TSNE_vizualisation"]
             self.per_step_bs = config["num_gpus"] * config["num_nodes"] * config["per_gpu_batchsize"]
             self.k_text_embeddings = BertEmbeddings(bert_config)
             self._shadow_layer(self.text_embeddings, self.k_text_embeddings)
@@ -377,7 +378,7 @@ class ViLTransformerSS(pl.LightningModule):
 
         return ret
     
-    def forward(self, batch):
+    def forward(self, batch,batch_idx):
         ret = dict()
         if len(self.current_tasks) == 0:
             ret.update(self.infer(batch))
@@ -413,17 +414,17 @@ class ViLTransformerSS(pl.LightningModule):
 
         # MoCo Contrasive framework
         if "moco" in self.current_tasks:
-            ret.update(objectives.compute_moco_contrastive(self, batch))
+            ret.update(objectives.compute_moco_contrastive(self, batch,batch_idx))
         
         if "barlowtwins" in self.current_tasks:
-            ret.update(objectives.compute_barlowtwins_contrastive(self, batch))
+            ret.update(objectives.compute_barlowtwins_contrastive(self, batch,batch_idx))
             
         return ret
 
 
     def training_step(self, batch, batch_idx):
         vilt_utils.set_task(self)
-        output = self(batch)
+        output = self(batch,batch_idx)
         total_loss = sum([v for k, v in output.items() if "loss" in k])
 
         return total_loss
@@ -433,7 +434,7 @@ class ViLTransformerSS(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         vilt_utils.set_task(self)
-        output = self(batch)
+        output = self(batch,batch_idx)
 
     def validation_epoch_end(self, outs):
         vilt_utils.epoch_wrapup(self)
@@ -442,7 +443,7 @@ class ViLTransformerSS(pl.LightningModule):
         # For adversarial
         #torch.set_grad_enabled(True)
         vilt_utils.set_task(self)
-        output = self(batch)
+        output = self(batch,batch_idx)
         ret = dict()
 
         if self.hparams.config["loss_names"]["vqa"] > 0:

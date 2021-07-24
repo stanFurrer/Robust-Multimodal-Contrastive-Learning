@@ -76,7 +76,7 @@ def config():
     momentum = 1.0
     temperature = 1.0
     adv_lr = 0.0051
-    
+    TSNE_vizualisation = False
     # attacks
     #PGD
     adv_steps_img = 5
@@ -150,7 +150,7 @@ def task_moco():
     synonym = "cos_sim"
     embedding_path = './attack/counter-fitted-vectors.txt'
     sim_path = './attack/cos_sim_counter_fitting.npy'
-
+    TSNE_vizualisation = True
 
 @ex.named_config
 def task_barlowtwins():

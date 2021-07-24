@@ -17,6 +17,7 @@ from torch.utils.data.distributed import DistributedSampler
 from einops import rearrange
 
 from vilt.modules.dist_utils import all_gather
+from TSNE_vizualisation import TSNE_projection
 
 def cost_matrix_cosine(x, y, eps=1e-5):
     """Compute cosine distnace across every pairs of x, y (batched)
@@ -141,7 +142,7 @@ def compute_geometric(pl_module, batch, loss_name, k_image=None):
     
     return batch #, txt_original_attacked
 
-def compute_moco_contrastive(pl_module, batch):
+def compute_moco_contrastive(pl_module, batch,batch_idx):
     def _momentum_update_key_layer(em, q_layer, k_layer):
         """
         Momentum update of the key encoder
@@ -304,6 +305,14 @@ def compute_moco_contrastive(pl_module, batch):
     _dequeue_and_enqueue(k_text, 'text')
     _dequeue_and_enqueue(k_image, 'image')
 
+    if (batch_idx) % 5 == 0 and pl_module.tsne_vizualisation: 
+        batch_idx +=1
+        print("this is batch_idx",batch_idx+1)
+        print("Computing TSNE")
+        nbr_element = batch_idx * len(batch["text"])
+        TSNE_projection(neg_img,neg_txt,nbr_element,batch_idx)
+        sys.exit("Stop")
+    
     ret["moco_loss"] = loss / loss_num
     
     phase = "train" if pl_module.training else "val"
@@ -335,10 +344,11 @@ def compute_moco_contrastive(pl_module, batch):
         pl_module.log(f"moco_dist_{phase}_txt_img/txt_img_pos_dist", ret["text_image_pos_dist"])
         pl_module.log(f"moco_dist_{phase}_txt_img/txt_img_neg_dist", ret["text_image_neg_dist"])
         pl_module.log(f"moco_dist_{phase}_txt_img/txt_img_difference", ret["text_image_neg_dist"] - ret["text_image_pos_dist"])
-
+    
+    
     return ret
 
-def compute_barlowtwins_contrastive(pl_module, batch):
+def compute_barlowtwins_contrastive(pl_module, batch, batch_idx):
     loss = 0
     loss_num = 0
     ret = {}
