@@ -82,6 +82,7 @@ def config():
     adv_steps_img = 5
     adv_lr_img = 0.5
     adv_max_norm_img = 0.1
+    attack_idx = [False, False]    
     #Geometric
     n_candidates = 10
     max_loops = 10
@@ -125,10 +126,10 @@ def task_moco():
     num_negative = 65536
     momentum = 0.999
     temperature = 0.07
-    augmentation = True
+    augmentation = False
     num_beams = 20
     num_return_sequences = 20
-    text_view = True
+    text_view = False
     image_view = True
     type_txt_augm = ["PEGASUS","EDA"] # EDA, PEGASUS    
     loss_names = _loss_names({"moco": 1})
@@ -140,7 +141,7 @@ def task_moco():
     # Attacks parameters
     # PGD
     adv_steps_img = 5
-    adv_lr_img = 0.5
+    adv_lr_img = 0.7
     adv_max_norm_img = 0.1
     #Geometric
     n_candidates = 10
@@ -150,29 +151,29 @@ def task_moco():
     synonym = "cos_sim"
     embedding_path = './attack/counter-fitted-vectors.txt'
     sim_path = './attack/cos_sim_counter_fitting.npy'
-    TSNE_vizualisation = True
+    TSNE_vizualisation = False
 
 @ex.named_config
 def task_barlowtwins():
     exp_name = "barlowtwins"
     # datasets = ["coco", "vg", "sbu", "gcc"]
     datasets = ["coco"]
-    augmentation = True
+    augmentation = False
     num_beams = 20
     num_return_sequences = 20
-    text_view = True
+    text_view = False
     image_view = True
     type_txt_augm = ["PEGASUS","EDA"] # EDA, PEGASUS      
     loss_names = _loss_names({"barlowtwins": 1})
     adv_lr = 0.0051
-    batch_size = 256
+    batch_size = 64
     max_epoch = 10
     max_image_len = 200
     test_only = False
     # Attacks parameters
     # PGD
-    adv_steps_img = 3
-    adv_lr_img = 0.5
+    adv_steps_img = 5
+    adv_lr_img = 0.7
     adv_max_norm_img = 0.1
     # Geometric
     n_candidates = 10
@@ -254,13 +255,15 @@ def task_finetune_nlvr2_randaug_attacked():
     warmup_steps = 0.1
     draw_false_image = 0
     learning_rate = 1e-4
+    test_only = False
     # Attacks parameters
     text_view = True
-    image_view = False
+    image_view = True
     # PGD
     adv_steps_img = 5
     adv_lr_img = 0.7
     adv_max_norm_img = 0.2
+    attack_idx = [False, True]
     #Geometric
     n_candidates = 10
     max_loops = 10

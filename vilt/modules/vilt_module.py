@@ -1,6 +1,6 @@
 #### New
-from attack.greedy_attack_vilt import GreedyAttack_moco, GreedyAttack_barlowtwins
-from attack.pgd_attack_vilt import PGDAttack_moco, PGDAttack_bartlowtwins
+from attack.greedy_attack_vilt import GreedyAttack_moco, GreedyAttack_barlowtwins, GreedyAttack_nlvr2
+from attack.pgd_attack_vilt import PGDAttack_moco, PGDAttack_bartlowtwins, PGDAttack_nlvr2
 from augmentation.image_augmentation import ImageAugmentation
 from augmentation.text_augmentation import TextAugmentation
 import os #
@@ -111,6 +111,7 @@ class ViLTransformerSS(pl.LightningModule):
             self.image_view = config["image_view"]
             self.adv_lr = config["adv_lr"]
             self.loss_weight = 0.001
+            self.augmentation= config["augmentation"]
             if self.augmentation : 
                 if self.text_view:
                     self.text_augmentation = TextAugmentation(config)
@@ -160,22 +161,31 @@ class ViLTransformerSS(pl.LightningModule):
             self.token_type_embeddings.weight.data[2, :] = emb_data[1, :]
             
         if self.hparams.config["loss_names"]["nlvr2_attacked"] > 0:
-            self.nlvr2_classifier = nn.Sequential(OrderedDict([
-                ('linear1_nlvr2', nn.Linear(hs * 2, hs * 2)),
-                ('norm_nlvr2' , nn.LayerNorm(hs * 2)),
-                ('gelu_nlvr2', nn.GELU()),
-                ('linear2_nlvr2',nn.Linear(hs * 2, 2)),
-            ]))
+            self.nlvr2_classifier = nn.Sequential(
+                nn.Linear(hs * 2, hs * 2),
+                nn.LayerNorm(hs * 2),
+                nn.GELU(),
+                nn.Linear(hs * 2, 2),
+            )
             self.nlvr2_classifier.apply(objectives.init_weights)
             emb_data = self.token_type_embeddings.weight.data
             self.token_type_embeddings = nn.Embedding(3, hs)
             self.token_type_embeddings.apply(objectives.init_weights)
             self.token_type_embeddings.weight.data[0, :] = emb_data[0, :]
             self.token_type_embeddings.weight.data[1, :] = emb_data[1, :]
-            self.token_type_embeddings.weight.data[2, :] = emb_data[1, :]   
+            self.token_type_embeddings.weight.data[2, :] = emb_data[1, :]
             #param attacks
             self.image_view = config["image_view"]
             self.text_view  = config["text_view"]
+            if config["text_view"]:
+                print("----Loading GreedyAttack_cross_entropy ----")
+                self.greedy_attacker = GreedyAttack_nlvr2(config)
+                print("----Greedy GreedyAttack_cross_entropy DONE ----")
+            if config["image_view"]:
+                self.attack_idx = config["attack_idx"]
+                self.pgd_attacker = PGDAttack_nlvr2(config)            
+            
+            """
             if config["text_view"] : 
                 self.n_candidates = config["n_candidates"]
                 self.max_loops = config["max_loops"]     
@@ -195,7 +205,7 @@ class ViLTransformerSS(pl.LightningModule):
                 self.adv_steps_img = config["adv_steps_img"]  
                 self.adv_lr_img = config["adv_lr_img"]     
                 self.adv_max_norm_img = config["adv_max_norm_img"] 
-
+            """
         if self.hparams.config["loss_names"]["irtr"] > 0:
             self.rank_output = nn.Linear(hs, 1)
             self.rank_output.weight.data = self.itm_score.fc.weight.data[1:, :]
@@ -219,9 +229,6 @@ class ViLTransformerSS(pl.LightningModule):
             param_k.data.copy_(param_q.data)
             param_k.requires_grad = False
         
-    #def get_input_embeddings(self):
-    #    return self.text_embeddings.word_embeddings
-    
     def infer(
         self,
         batch,
@@ -441,7 +448,7 @@ class ViLTransformerSS(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         # For adversarial
-        #torch.set_grad_enabled(True)
+        torch.set_grad_enabled(True)
         vilt_utils.set_task(self)
         output = self(batch,batch_idx)
         ret = dict()
