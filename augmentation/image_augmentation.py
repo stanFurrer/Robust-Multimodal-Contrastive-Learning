@@ -76,13 +76,13 @@ class ImageAugmentation :
 
     def collate(self, images):
         batch_size = len(images)
-        
+        # Creat the tensor matrix with max_height and max_width
         img_sizes = [ii.shape for i in images if i is not None for ii in i]
         max_height = max([i[1] for i in img_sizes])
         max_width = max([i[2] for i in img_sizes])
 
         new_images = [torch.zeros(batch_size, 3, max_height, max_width)]
-
+        
         for bi in range(batch_size):
             orig_batch = images[bi]
             if orig_batch is None:

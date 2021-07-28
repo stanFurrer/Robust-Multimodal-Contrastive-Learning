@@ -160,12 +160,12 @@ def task_barlowtwins():
     exp_name = "barlowtwins"
     # datasets = ["coco", "vg", "sbu", "gcc"]
     datasets = ["coco"]
-    Multimodal = True
-    augmentation = True
+    Multimodal = True #-------------------------
+    augmentation = False #-------------------------
     num_beams = 20
     num_return_sequences = 20
-    text_view = False
-    image_view = True
+    text_view = True #-------------------------
+    image_view = False #-------------------------
     type_txt_augm = ["PEGASUS","EDA"] # EDA, PEGASUS      
     loss_names = _loss_names({"barlowtwins": 1})
     adv_lr = 0.0051
@@ -177,7 +177,7 @@ def task_barlowtwins():
     # PGD
     adv_steps_img = 5
     adv_lr_img = 0.7
-    adv_max_norm_img = 0.1
+    adv_max_norm_img = 0.2
     # Geometric
     n_candidates = 10
     max_loops = 10

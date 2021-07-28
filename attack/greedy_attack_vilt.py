@@ -246,7 +246,7 @@ class GreedyAttack:
                 text,
                 batch,
                 device,
-                k_image, # k_text
+                k_modality, # k_text
     ):
         raise NotImplementedError(f"get_grad of {self.contrastive_framework} isn't implemented.")   
     
@@ -259,7 +259,7 @@ class GreedyAttack:
                                   batch,
                                   batch_size,
                                   device,
-                                  k_image=None # k_text=None
+                                  k_modality=None # k_text=None
                                  ):
         
         loss_z, grads, text_representation = self.get_grad(input_ids,
@@ -267,7 +267,7 @@ class GreedyAttack:
                                                             text,
                                                             batch,
                                                             device,
-                                                            k_image # k_text
+                                                            k_modality # k_text
                                                            )
         
         sep_idx = (input_ids == self.tokenizer._convert_token_to_id('[SEP]')).nonzero()
@@ -405,7 +405,7 @@ class GreedyAttack_moco(GreedyAttack):
                  text,
                  batch,
                  device,
-                 k_image, # k_text
+                 k_modality, # k_text
                  ):
         embedding_layer = self.text_embeddings.word_embeddings  # word_embeddings
         #projector_layer = self.moco_head.txt_model.linear2 ##
@@ -441,7 +441,7 @@ class GreedyAttack_moco(GreedyAttack):
             q_attacked = nn.functional.normalize(text_representation_q, dim=1)
             
             ################ RMCL #################
-            l_pos = torch.einsum('nc,nc->n', [q_attacked, k_image]).unsqueeze(-1) # k_text
+            l_pos = torch.einsum('nc,nc->n', [q_attacked, k_modality]).unsqueeze(-1) # k_text
             l_neg = torch.einsum('nc,ck->nk', [q_attacked, self.pl_module.text_queue.clone().detach()])
             logits = torch.cat([l_pos, l_neg], dim=1)
             logits /= self.pl_module.temperature
@@ -465,7 +465,7 @@ class GreedyAttack_moco(GreedyAttack):
         #return grads_z, grads, text_representation
         return loss, grads, q_attacked
     
-    def split_forward(self, batch, all_num, ori_z, k_image):
+    def split_forward(self, batch, all_num, ori_z, k_modality):
         """Do a Forward pass to get the text Representation"""
         with torch.no_grad():
             infer = self.infer(batch, mask_text=False, mask_image=False)
@@ -481,7 +481,7 @@ class GreedyAttack_moco(GreedyAttack):
                 for j, txt in enumerate(txt_split):
                     ori_z[i] = txt
                     ################ RMCL #################
-                    l_pos = torch.einsum('nc,nc->n', [ori_z, k_image]).unsqueeze(-1)
+                    l_pos = torch.einsum('nc,nc->n', [ori_z, k_modality]).unsqueeze(-1)
                     l_neg = torch.einsum('nc,ck->nk', [ori_z, self.pl_module.text_queue.clone().detach()])
                     logits = torch.cat([l_pos, l_neg], dim=1)
                     logits /= self.pl_module.temperature
@@ -511,7 +511,7 @@ class GreedyAttack_moco(GreedyAttack):
     def adv_attack_samples(self,
                            pl_module,
                            batch,
-                           k_image,
+                           k_modality,
                            ):
         
         self.device = pl_module.device
@@ -547,7 +547,7 @@ class GreedyAttack_moco(GreedyAttack):
                                                                         batch=batch,
                                                                         batch_size=batch_size,
                                                                         device=self.device,
-                                                                        k_image=k_image, # k_text=k_text,
+                                                                        k_modality=k_modality, # k_text=k_text,
                                                                         )
             
             all_new_text, all_num,changed = self.construct_new_samples(word_idx=replace_idx,
@@ -604,7 +604,7 @@ class GreedyAttack_moco(GreedyAttack):
             batch_c['text_ids'] = all_new_text_ids
             batch_c['text_masks'] = all_new_text_masks
             
-            outputs = self.split_forward(batch_c, all_num, ori_z, k_image)
+            outputs = self.split_forward(batch_c, all_num, ori_z, k_modality)
             
             #outputs = self.split_forward(batch_c)
             #outputs = torch.split(outputs, all_num)
@@ -675,7 +675,7 @@ class GreedyAttack_barlowtwins(GreedyAttack):
                  text,
                  batch,
                  device,
-                 k_image=None # k_text=None
+                 k_modality=None # k_text=None
                  ):
         
         def off_diagonal(x):
@@ -716,7 +716,7 @@ class GreedyAttack_barlowtwins(GreedyAttack):
             
             ################ RMCL #################
             # c = text_representation.T @ k_text
-            c = torch.mm(text_representation.T, k_image) / text_representation.shape[0] #k_text
+            c = torch.mm(text_representation.T, k_modality) / text_representation.shape[0] #k_text
 
             # c.div_(pl_module.per_step_bs)
             # torch.distributed.all_reduce(c)
@@ -741,7 +741,7 @@ class GreedyAttack_barlowtwins(GreedyAttack):
         #text_representation = text_representation
         return loss, grads, (image_representation, text_representation)
     
-    def split_forward(self, batch, all_num, ori_z, k_image):
+    def split_forward(self, batch, all_num, ori_z, k_modality):
         """Do a Forward pass to get the text Representation"""
         def off_diagonal(x):
             n, m = x.shape
@@ -763,7 +763,7 @@ class GreedyAttack_barlowtwins(GreedyAttack):
                     ori_z[0][i], ori_z[1][i] = img, txt
                     ################ RMCL #################
                     # c = ori_z[1].T @ k_text
-                    c = torch.mm(ori_z[1].T, k_image) / ori_z[1].shape[0] # Yiran k_text
+                    c = torch.mm(ori_z[1].T, k_modality) / ori_z[1].shape[0] # Yiran k_text
 
                     # c.div_(pl_module.per_step_bs)
                     # torch.distributed.all_reduce(c)
@@ -783,7 +783,7 @@ class GreedyAttack_barlowtwins(GreedyAttack):
         # print([len(x[0]) for x in all_loss])
         return all_loss
     
-    def adv_attack_samples(self, pl_module, batch, k_image=None): #k_text
+    def adv_attack_samples(self, pl_module, batch, k_modality=None): #k_text
         
         self.device = pl_module.device
         self.criterion = nn.CrossEntropyLoss().cuda(self.device)
@@ -813,7 +813,7 @@ class GreedyAttack_barlowtwins(GreedyAttack):
                                                                         batch=batch,
                                                                         batch_size=batch_size,
                                                                         device=self.device,
-                                                                        k_image=k_image #k_text
+                                                                        k_modality=k_modality #k_text
                                                                         )
             
             all_new_text, all_num,changed  = self.construct_new_samples(word_idx=replace_idx,
@@ -869,7 +869,7 @@ class GreedyAttack_barlowtwins(GreedyAttack):
             batch_c['text_ids'] = all_new_text_ids
             batch_c['text_masks'] = all_new_text_masks
             
-            outputs = self.split_forward(batch_c, all_num, ori_z, k_image)
+            outputs = self.split_forward(batch_c, all_num, ori_z, k_modality)
             #outputs = torch.split(outputs, all_num)
             count = 0
             
@@ -941,7 +941,7 @@ class GreedyAttack_nlvr2(GreedyAttack):
                  text,
                  batch,
                  device,
-                 k_image,#k_text
+                 k_modality,#k_text
                  ):
         embedding_layer = self.text_embeddings.word_embeddings  # word_embeddings
         # projector_layer = self.nlvr2_classifier.linear2_nlvr2
@@ -1031,7 +1031,7 @@ class GreedyAttack_nlvr2(GreedyAttack):
     def adv_attack_samples(self,
                            pl_module,
                            batch,
-                           k_image, #k_text
+                           k_modality, #k_text
                            ):
         
         self.device = pl_module.device
@@ -1065,7 +1065,7 @@ class GreedyAttack_nlvr2(GreedyAttack):
                                                                       batch=batch,
                                                                       batch_size=batch_size,
                                                                       device=self.device,
-                                                                      k_image=k_image, #k_text
+                                                                      k_modality=k_modality, #k_text
                                                                       )
             
             all_new_text, all_num, changed = self.construct_new_samples(word_idx=replace_idx,

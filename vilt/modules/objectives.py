@@ -102,8 +102,8 @@ def image_augmentation(pl_module, batch):
     batch["image"] = new_images
     return batch
     
-def compute_pgd(pl_module, batch, loss_name, k_text=None):
-    img_delta = pl_module.pgd_attacker.pgd_attack(pl_module, batch, k_text)
+def compute_pgd(pl_module, batch, loss_name, k_modality=None):
+    img_delta = pl_module.pgd_attacker.pgd_attack(pl_module, batch, k_modality = k_modality)
     # add debug code here
     if loss_name == "nlvr2_attacked":
         batch["image_0"][0] = batch["image_0"][0] + img_delta[0]
@@ -135,10 +135,10 @@ def compute_pgd(pl_module, batch, loss_name, k_text=None):
     return batch
 """
 
-def compute_geometric(pl_module, batch, loss_name, k_image=None):
+def compute_geometric(pl_module, batch, loss_name, k_modality=None):
     
     real_sentence = batch["text"]
-    attack_words = pl_module.greedy_attacker.adv_attack_samples(pl_module,batch,k_image) 
+    attack_words = pl_module.greedy_attacker.adv_attack_samples(pl_module,batch,k_modality) 
     
     if attack_words["Problem"]:
         print("This is changes",attack_words['changes_verification'])
@@ -223,7 +223,7 @@ def compute_moco_contrastive(pl_module, batch,batch_idx):
             print("Augmentation images")            
             augmented_batch = image_augmentation(pl_module, deepcopy(batch))
         else : 
-            augmented_batch = compute_pgd(pl_module, deepcopy(batch), "moco", k_text)
+            augmented_batch = compute_pgd(pl_module, deepcopy(batch), "moco", k_modality=k_text)
         infer = pl_module.infer(augmented_batch, mask_text=False, mask_image=False)
         image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
         q = nn.functional.normalize(image_representation_q, dim=1)
@@ -287,7 +287,7 @@ def compute_moco_contrastive(pl_module, batch,batch_idx):
         if pl_module.augmentation : 
             augmented_batch = text_augmentation(pl_module, deepcopy(batch))
         else :   
-            augmented_batch = compute_geometric(pl_module, deepcopy(batch), "moco", k_image)
+            augmented_batch = compute_geometric(pl_module, deepcopy(batch), "moco", k_modality = k_image)
         infer = pl_module.infer(augmented_batch, mask_text=False, mask_image=False)
         image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
         q = nn.functional.normalize(text_representation_q, dim=1)
@@ -425,7 +425,10 @@ def compute_barlowtwins_contrastive(pl_module, batch,batch_idx):
         if pl_module.augmentation : 
             augmented_batch = image_augmentation(pl_module, deepcopy(batch))
         else : 
-            augmented_batch = compute_pgd(pl_module, deepcopy(batch), "barlowtwins",k_text=original_text)
+            if pl_module.multimodal :
+                augmented_batch = compute_pgd(pl_module, deepcopy(batch), "barlowtwins",k_modality=original_text)
+            else : 
+                augmented_batch = compute_pgd(pl_module, deepcopy(batch), "barlowtwins",k_modality=original_image)
         infer = pl_module.infer(augmented_batch, mask_text=False, mask_image=False)
         image_representation, text_representation = pl_module.barlowtwins_head(infer['image_feats'], infer['text_feats'])
         
@@ -476,7 +479,11 @@ def compute_barlowtwins_contrastive(pl_module, batch,batch_idx):
         if pl_module.augmentation : 
             augmented_batch = text_augmentation(pl_module, deepcopy(batch))
         else : 
-            augmented_batch = compute_geometric(pl_module, deepcopy(batch), "barlowtwins",k_image=original_image)
+            if pl_module.multimodal :
+                augmented_batch = compute_geometric(pl_module, deepcopy(batch), "barlowtwins",k_modality=original_image)
+            else : 
+                augmented_batch = compute_geometric(pl_module, deepcopy(batch), "barlowtwins",k_modality=original_text)
+                
         infer = pl_module.infer(augmented_batch, mask_text=False, mask_image=False)
         image_representation, text_representation = pl_module.barlowtwins_head(infer['image_feats'], infer['text_feats'])
          

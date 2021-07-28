@@ -125,7 +125,7 @@ class PGDAttack_moco(PGDAttack):
         self.token_type_embeddings.zero_grad()
         self.moco_head.zero_grad()
     
-    def pgd_attack(self, pl_module, batch, k_text): # k_image
+    def pgd_attack(self, pl_module, batch, k_modality = None): # k_image
         self.build_mini_vilt(pl_module)
         loss_fct = nn.CrossEntropyLoss()
         # Get the original img
@@ -146,7 +146,7 @@ class PGDAttack_moco(PGDAttack):
                     print("problem in step ", astep)
                     sys.exit("STOPP")
                 # RMCL Loss
-                l_pos = torch.einsum('nc,nc->n', [q_attacked, k_text]).unsqueeze(-1) # k_image
+                l_pos = torch.einsum('nc,nc->n', [q_attacked, k_modality]).unsqueeze(-1) # k_image
                 l_neg = torch.einsum('nc,ck->nk', [q_attacked, self.pl_module.image_queue.clone().detach()])
                 logits = torch.cat([l_pos, l_neg], dim=1)
                 logits /= self.pl_module.temperature
@@ -191,7 +191,7 @@ class PGDAttack_bartlowtwins(PGDAttack):
         self.token_type_embeddings.zero_grad()
         self.barlowtwins_head.zero_grad()
     
-    def pgd_attack(self, pl_module, batch, k_text=None): # k_image
+    def pgd_attack(self, pl_module, batch, k_modality=None): # k_image
         
         def off_diagonal(x):
             n, m = x.shape
@@ -212,7 +212,7 @@ class PGDAttack_bartlowtwins(PGDAttack):
                 infer = self.infer(batch, mask_text=False, mask_image=False)
                 image_representation, _ = self.barlowtwins_head(infer['image_feats'], infer['text_feats'])
                 # c = image_representation.T @ k_image
-                c = torch.mm(image_representation.T, k_text) / image_representation.shape[0]
+                c = torch.mm(image_representation.T, k_modality) / image_representation.shape[0]
 
                 # c.div_(pl_module.per_step_bs)
                 # torch.distributed.all_reduce(c)
@@ -261,7 +261,7 @@ class PGDAttack_nlvr2(PGDAttack):
         self.pooler.zero_grad()
         self.nlvr2_classifier.zero_grad()
     
-    def pgd_attack(self, pl_module, batch, k_text=None):
+    def pgd_attack(self, pl_module, batch, k_modality=None):
         self.build_mini_vilt(pl_module)
         loss_fct = nn.CrossEntropyLoss()
         # Get the original img

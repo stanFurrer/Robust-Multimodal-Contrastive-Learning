@@ -13,6 +13,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 def main(_config):
     _config = copy.deepcopy(_config)
     print("\n------------------------------")
+    print("The Multimodal is set to ", _config["Multimodal"])
     if _config["augmentation"] : 
         #print("Doing the following text augmentation",_config["type_txt_augm"] ) 
         print("Text_view set to ", _config["text_view"])
@@ -46,22 +47,24 @@ def main(_config):
         mode="max",
         save_last=True,
     )
-
-    # For test Purposes : Other
-    logger = pl.loggers.TensorBoardLogger(
-        _config["log_dir"],
-        name= "Other"
-        #name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}',
-    )         
-    """ # For experimence Purposes 
-    logger = pl.loggers.TensorBoardLogger(
-        _config["log_dir"],
-        version="Name",
-        name= "Barlow_Twins_fully_cross_modal"
-        #name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}',
-    )          
-    """   
-        
+    test = True
+    if test == True : 
+        # For test Purposes : Other
+        logger = pl.loggers.TensorBoardLogger(
+            _config["log_dir"],
+            name= "Other"
+            #name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}',
+        )         
+    else : 
+        #name    = "Barlow_Twins_fully_uni_modal"
+        #version = "Geom" 
+        # For experimence Purposes 
+        logger = pl.loggers.TensorBoardLogger(
+            _config["log_dir"],
+            version=version,
+            name= name
+        )          
+     
     lr_callback = pl.callbacks.LearningRateMonitor(logging_interval="step")
     callbacks = [checkpoint_callback, lr_callback]
 
