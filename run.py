@@ -46,24 +46,21 @@ def main(_config):
         mode="max",
         save_last=True,
     )
-    """
-    if _config["image_view"] : 
-        logger = pl.loggers.TensorBoardLogger(
-            _config["log_dir"],
-            name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}_lr{_config["adv_lr_img"]}_norm{_config["adv_max_norm_img"]}',
-        )
-    elif _config["text_view"] :
-        logger = pl.loggers.TensorBoardLogger(
-            _config["log_dir"],
-            name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}_candidate{_config["n_candidates"]}_loop{_config["max_loops"]}',
-        )        
-    """
-    #else : 
+
+    # For test Purposes : Other
     logger = pl.loggers.TensorBoardLogger(
         _config["log_dir"],
-        name= "Barlow_Twins_fully_cross_modal"
+        name= "Other"
         #name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}',
     )         
+    """ # For experimence Purposes 
+    logger = pl.loggers.TensorBoardLogger(
+        _config["log_dir"],
+        version="Name",
+        name= "Barlow_Twins_fully_cross_modal"
+        #name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}',
+    )          
+    """   
         
     lr_callback = pl.callbacks.LearningRateMonitor(logging_interval="step")
     callbacks = [checkpoint_callback, lr_callback]

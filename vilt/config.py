@@ -66,6 +66,7 @@ def config():
     get_recall_metric = False
 
     # Contrastive setting
+    Multimodal = False
     num_negative = 0
     text_view = False
     image_view = False
@@ -123,6 +124,7 @@ def task_moco():
     exp_name = "moco"
     # datasets = ["coco", "vg", "sbu", "gcc"]
     datasets = ["coco"]
+    Multimodal = False
     num_negative = 65536
     momentum = 0.999
     temperature = 0.07
@@ -158,7 +160,8 @@ def task_barlowtwins():
     exp_name = "barlowtwins"
     # datasets = ["coco", "vg", "sbu", "gcc"]
     datasets = ["coco"]
-    augmentation = False
+    Multimodal = True
+    augmentation = True
     num_beams = 20
     num_return_sequences = 20
     text_view = False
@@ -183,7 +186,7 @@ def task_barlowtwins():
     synonym = "cos_sim"
     embedding_path = './attack/counter-fitted-vectors.txt'
     sim_path = './attack/cos_sim_counter_fitting.npy'
-
+    TSNE_vizualisation = False
 
 @ex.named_config
 def task_mlm_itm():

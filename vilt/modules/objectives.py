@@ -240,10 +240,14 @@ def compute_moco_contrastive(pl_module, batch,batch_idx):
         labels = labels.type_as(logits)
 
         ret["image_image_pos_dist"] = torch.linalg.norm(q-k_image, dim=1).mean()
+        ret["image_image_pos_cosine"] = pl_module.cosine(q,k_image).mean()
         dist = 0
+        cosine = 0
         for sub_q in q:
             dist += torch.linalg.norm(sub_q-neg_img.T, dim=1).mean()
+            cosine += pl_module.cosine(torch.unsqueeze(sub_q,0),neg_img.T).mean()
         ret["image_image_neg_dist"] = dist / q.shape[0]
+        ret["image_image_neg_cosine"] = cosine / q.shape[0]
         # ret["image_image_logits"] = logits
         # ret["image_image_labels"] = labels
         
@@ -263,10 +267,14 @@ def compute_moco_contrastive(pl_module, batch,batch_idx):
         labels = labels.type_as(logits)
         
         ret["image_text_pos_dist"] = torch.linalg.norm(q - k_text, dim=1).mean()
+        ret["image_text_pos_cosine"] = pl_module.cosine(q,k_text).mean()
         dist = 0
+        cosine = 0
         for sub_q in q:
             dist += torch.linalg.norm(sub_q - neg_txt.T, dim=1).mean()
+            cosine += pl_module.cosine(torch.unsqueeze(sub_q,0),neg_txt.T).mean()
         ret["image_text_neg_dist"] = dist / q.shape[0]
+        ret["image_text_neg_cosine"] = cosine / q.shape[0]
         # ret["image_text_logits"] = logits
         # ret["image_text_labels"] = labels
 
@@ -296,10 +304,14 @@ def compute_moco_contrastive(pl_module, batch,batch_idx):
         labels = labels.type_as(logits)
         
         ret["text_text_pos_dist"] = torch.linalg.norm(q - k_text, dim=1).mean()
+        ret["text_text_pos_cosine"] = pl_module.cosine(q,k_text).mean()
         dist = 0
+        cosine = 0
         for sub_q in q:
             dist += torch.linalg.norm(sub_q - neg_txt.T, dim=1).mean()
+            cosine += pl_module.cosine(torch.unsqueeze(sub_q,0),neg_txt.T).mean()
         ret["text_text_neg_dist"] = dist / q.shape[0]
+        ret["text_text_neg_cosine"] = cosine / q.shape[0]
         # ret["text_text_logits"] = logits
         # ret["text_text_labels"] = labels
         
@@ -319,10 +331,15 @@ def compute_moco_contrastive(pl_module, batch,batch_idx):
         labels = labels.type_as(logits)
         
         ret["text_image_pos_dist"] = torch.linalg.norm(q - k_image, dim=1).mean()
+        ret["text_image_pos_cosine"] = pl_module.cosine(q,k_image).mean()
         dist = 0
+        cosine = 0
         for sub_q in q:
             dist += torch.linalg.norm(sub_q - neg_img.T, dim=1).mean()
+            cosine += pl_module.cosine(torch.unsqueeze(sub_q,0),neg_img.T).mean()
         ret["text_image_neg_dist"] = dist / q.shape[0]
+        ret["text_image_neg_cosine"] = cosine / q.shape[0]        
+        
         # ret["text_image_pos_dist"] = torch.linalg.norm(q-k_image).mean()
         # ret["text_image_neg_dist"] = torch.linalg.norm(q-neg_img, dim=1).mean()
         # ret["text_image_logits"] = logits
@@ -337,13 +354,11 @@ def compute_moco_contrastive(pl_module, batch,batch_idx):
         _dequeue_and_enqueue(k_text, 'text')
         _dequeue_and_enqueue(k_image, 'image')
 
-    if (batch_idx) % 5 == 0 and pl_module.tsne_vizualisation: 
+    if (batch_idx) % 1000 == 0 and pl_module.tsne_vizualisation: 
         batch_idx +=1
-        print("this is batch_idx",batch_idx+1)
-        print("Computing TSNE")
-        nbr_element = batch_idx * len(batch["text"])
+        print("--Computing TSNE--")
+        nbr_element = 1000 * len(batch["text"])
         TSNE_projection(neg_img,neg_txt,nbr_element,batch_idx)
-        sys.exit("Stop")
     
     ret["moco_loss"] = loss / loss_num
     
@@ -351,28 +366,44 @@ def compute_moco_contrastive(pl_module, batch,batch_idx):
     loss = getattr(pl_module, f"{phase}_moco_loss")(ret["moco_loss"])
     pl_module.log(f"moco_loss/step/{phase}", loss)
     
-    if pl_module.text_view and pl_module.image_view:
-        pl_module.log(f"moco_dist_{phase}/img_txt_dist", torch.linalg.norm(original_image - original_text, dim=1).mean())
+    pl_module.log(f"moco_dist_{phase}/Original/cosine/img_txt", pl_module.cosine(original_image,original_text).mean())
     
     if pl_module.image_view:          
-        pl_module.log(f"moco_dist_{phase}_img_img/img_img_pos_dist", ret["image_image_pos_dist"])
-        pl_module.log(f"moco_dist_{phase}_img_img/img_img_neg_dist", ret["image_image_neg_dist"])
-        pl_module.log(f"moco_dist_{phase}_img_img/img_img_difference", ret["image_image_neg_dist"] - ret["image_image_pos_dist"])
+        # L2 distance
+        pl_module.log(f"moco_dist_{phase}_img_img/L2/Pos_img_img", ret["image_image_pos_dist"])
+        pl_module.log(f"moco_dist_{phase}_img_img/L2/Neg_img_img", ret["image_image_neg_dist"])
+        pl_module.log(f"moco_dist_{phase}_img_img/L2/Neg-Pos_img_img", ret["image_image_neg_dist"] - ret["image_image_pos_dist"])
 
-        pl_module.log(f"moco_dist_{phase}_img_txt/img_txt_pos_dist", ret["image_text_pos_dist"])
-        pl_module.log(f"moco_dist_{phase}_img_txt/img_txt_neg_dist", ret["image_text_neg_dist"])
-        pl_module.log(f"moco_dist_{phase}_img_txt/img_txt_difference", ret["image_text_neg_dist"] - ret["image_text_pos_dist"])
+        pl_module.log(f"moco_dist_{phase}_img_txt/L2/Pos_img_txt", ret["image_text_pos_dist"])
+        pl_module.log(f"moco_dist_{phase}_img_txt/L2/Neg_img_txt", ret["image_text_neg_dist"])
+        pl_module.log(f"moco_dist_{phase}_img_txt/L2/Neg-Pos_img_txt", ret["image_text_neg_dist"] - ret["image_text_pos_dist"])
+        # Cosine distance
+        pl_module.log(f"moco_dist_{phase}_img_img/cosine/Pos_img_img", ret["image_image_pos_cosine"])
+        pl_module.log(f"moco_dist_{phase}_img_img/cosine/Neg_img_img", ret["image_image_neg_cosine"])
+        pl_module.log(f"moco_dist_{phase}_img_img/cosine/Neg-Pos_img_img", ret["image_image_neg_cosine"] - ret["image_image_pos_cosine"])
 
+        pl_module.log(f"moco_dist_{phase}_img_txt/cosine/Pos_img_txt", ret["image_text_pos_cosine"])
+        pl_module.log(f"moco_dist_{phase}_img_txt/cosine/Neg_img_txt", ret["image_text_neg_cosine"])
+        pl_module.log(f"moco_dist_{phase}_img_txt/cosine/Neg-Pos_img_txt", ret["image_text_neg_cosine"] - ret["image_text_pos_cosine"])        
+        
     if pl_module.text_view:     
-        pl_module.log(f"moco_dist_{phase}_txt_txt/txt_txt_pos_dist", ret["text_text_pos_dist"])
-        pl_module.log(f"moco_dist_{phase}_txt_txt/txt_txt_neg_dist", ret["text_text_neg_dist"])
-        pl_module.log(f"moco_dist_{phase}_txt_txt/txt_txt_difference", ret["text_text_neg_dist"] - ret["text_text_pos_dist"])
+        # L2 distance
+        pl_module.log(f"moco_dist_{phase}_txt_txt/L2/Pos_txt_txt", ret["text_text_pos_dist"])
+        pl_module.log(f"moco_dist_{phase}_txt_txt/L2/Neg_txt_txt", ret["text_text_neg_dist"])
+        pl_module.log(f"moco_dist_{phase}_txt_txt/L2/Neg-Pos_txt_txt", ret["text_text_neg_dist"] - ret["text_text_pos_dist"])
 
-        pl_module.log(f"moco_dist_{phase}_txt_img/txt_img_pos_dist", ret["text_image_pos_dist"])
-        pl_module.log(f"moco_dist_{phase}_txt_img/txt_img_neg_dist", ret["text_image_neg_dist"])
-        pl_module.log(f"moco_dist_{phase}_txt_img/txt_img_difference", ret["text_image_neg_dist"] - ret["text_image_pos_dist"])
-    
-    
+        pl_module.log(f"moco_dist_{phase}_txt_img/L2/Pos_txt_img", ret["text_image_pos_dist"])
+        pl_module.log(f"moco_dist_{phase}_txt_img/L2/Neg_txt_img", ret["text_image_neg_dist"])
+        pl_module.log(f"moco_dist_{phase}_txt_img/L2/Neg-Pos_txt_img", ret["text_image_neg_dist"] - ret["text_image_pos_dist"])
+        # Cosine distance
+        pl_module.log(f"moco_dist_{phase}_txt_txt/cosine/Pos_txt_txt", ret["text_text_pos_cosine"])
+        pl_module.log(f"moco_dist_{phase}_txt_txt/cosine/Neg_txt_txt", ret["text_text_neg_cosine"])
+        pl_module.log(f"moco_dist_{phase}_txt_txt/cosine/Neg-Pos_txt_txt", ret["text_text_neg_cosine"] - ret["text_text_pos_cosine"])
+
+        pl_module.log(f"moco_dist_{phase}_txt_img/cosine/Pos_txt_img", ret["text_image_pos_cosine"])
+        pl_module.log(f"moco_dist_{phase}_txt_img/cosine/Neg_txt_img", ret["text_image_neg_cosine"])
+        pl_module.log(f"moco_dist_{phase}_txt_img/cosine/Neg-Pos_txt_img", ret["text_image_neg_cosine"] - ret["text_image_pos_cosine"])
+        
     return ret
 
 def compute_barlowtwins_contrastive(pl_module, batch,batch_idx):
@@ -397,48 +428,49 @@ def compute_barlowtwins_contrastive(pl_module, batch,batch_idx):
             augmented_batch = compute_pgd(pl_module, deepcopy(batch), "barlowtwins",k_text=original_text)
         infer = pl_module.infer(augmented_batch, mask_text=False, mask_image=False)
         image_representation, text_representation = pl_module.barlowtwins_head(infer['image_feats'], infer['text_feats'])
-
-        ### This is the original implementation
-        # Image, Image
-        # c = image_representation.T @ original_image
         
-        # c.div_(pl_module.per_step_bs)
-        # torch.distributed.all_reduce(c)
+        if pl_module.multimodal : 
+            # Image, Text
+            c = image_representation.T @ original_text
+            c.div_(pl_module.per_step_bs)
+            torch.distributed.all_reduce(c)
+
+            on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
+            off_diag = off_diagonal(c).pow_(2).sum()
+            
+        else : 
+            # Image, Image
+            c = image_representation.T @ original_image
+            c.div_(pl_module.per_step_bs)
+            torch.distributed.all_reduce(c)
         
-        # on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
-        # off_diag = off_diagonal(c).pow_(2).sum()
-
-        # ret["image_image_dist"] = torch.linalg.norm(image_representation - text_representation, dim=1).mean()
-
-        # loss = loss + on_diag + pl_module.adv_lr * off_diag
-        # loss_num += 1
-
-        # image, text
-        c = image_representation.T @ original_text
-        #c = torch.mm(image_representation.T, original_text) / image_representation.shape[0] # Devide by the bath
-
-        c.div_(pl_module.per_step_bs)
-        torch.distributed.all_reduce(c)
-
-        on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
-        off_diag = off_diagonal(c).pow_(2).sum()
-        
+            on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
+            off_diag = off_diagonal(c).pow_(2).sum()
+         
+        loss = loss + on_diag + pl_module.adv_lr * off_diag
+        loss_num += 1
         ret["barlowtwins_loss_invariance_img"] = on_diag
         ret["barlowtwins_loss_redundancy_img"] = pl_module.adv_lr * off_diag
         
         dist_image_neg_dist = 0
         dist_text_neg_dist  = 0
+        dist_image_neg_cosine = 0
+        dist_text_neg_cosine  = 0        
         for sub_img in image_representation:
             dist_image_neg_dist += torch.linalg.norm(sub_img - original_image, dim=1).mean()
             dist_text_neg_dist  += torch.linalg.norm(sub_img - original_text, dim=1).mean() 
+            dist_image_neg_cosine += pl_module.cosine(torch.unsqueeze(sub_img,0),original_image).mean()
+            dist_text_neg_cosine  += pl_module.cosine(torch.unsqueeze(sub_img,0),original_text).mean()
+        
         ret["image_image_neg_dist"] = dist_image_neg_dist / image_representation.shape[0]
         ret["image_text_neg_dist"]  = dist_text_neg_dist / image_representation.shape[0]
+        ret["image_image_neg_cosine"] = dist_image_neg_cosine / image_representation.shape[0]
+        ret["image_text_neg_cosine"] = dist_text_neg_cosine / image_representation.shape[0]
         
         ret["image_image_dist"] = torch.linalg.norm(image_representation - original_image, dim=1).mean()
         ret["image_text_dist"] = torch.linalg.norm(image_representation - original_text, dim=1).mean()
-        
-        loss = loss + on_diag + pl_module.adv_lr * off_diag
-        loss_num += 1
+        ret["image_image_cosine"] = pl_module.cosine(image_representation,original_image).mean()
+        ret["image_text_cosine"] = pl_module.cosine(image_representation,original_text).mean()
 
     if pl_module.text_view:
         if pl_module.augmentation : 
@@ -448,46 +480,51 @@ def compute_barlowtwins_contrastive(pl_module, batch,batch_idx):
         infer = pl_module.infer(augmented_batch, mask_text=False, mask_image=False)
         image_representation, text_representation = pl_module.barlowtwins_head(infer['image_feats'], infer['text_feats'])
          
-        # text, image
-        # c = text_representation.T @ original_text
-        
-        # c.div_(pl_module.per_step_bs)
-        # torch.distributed.all_reduce(c)
-    
-        # on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
-        # off_diag = off_diagonal(c).pow_(2).sum()
+        if pl_module.multimodal :
+            # Text, Image
+            c = text_representation.T @ original_image
 
-        # ret["text_image_dist"] = torch.linalg.norm(text_representation - image_representation, dim=1).mean()
-        
-        # loss = loss + on_diag + pl_module.adv_lr * off_diag
-        # loss_num += 1
-        
-        # text, image
-        c = text_representation.T @ original_text
-        #c = torch.mm(text_representation.T, original_image) / text_representation.shape[0]
-        
-        c.div_(pl_module.per_step_bs)
-        torch.distributed.all_reduce(c)
+            c.div_(pl_module.per_step_bs)
+            torch.distributed.all_reduce(c)
 
-        on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
-        off_diag = off_diagonal(c).pow_(2).sum()
+            on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
+            off_diag = off_diagonal(c).pow_(2).sum()    
+        else : 
+            # Text, Text
+            c = text_representation.T @ original_text
+
+            c.div_(pl_module.per_step_bs)
+            torch.distributed.all_reduce(c)
+
+            on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
+            off_diag = off_diagonal(c).pow_(2).sum()
+
+        loss = loss + on_diag + pl_module.adv_lr * off_diag
+        loss_num += 1   
         
         ret["barlowtwins_loss_invariance_text"] = on_diag
         ret["barlowtwins_loss_redundancy_text"] = pl_module.adv_lr * off_diag        
         
         dist_image_neg_dist = 0
         dist_text_neg_dist  = 0
+        dist_image_neg_cosine = 0
+        dist_text_neg_cosine  = 0
         for sub_text in text_representation:
             dist_image_neg_dist += torch.linalg.norm(sub_text - original_image, dim=1).mean()
             dist_text_neg_dist  += torch.linalg.norm(sub_text - original_text, dim=1).mean() 
+            dist_image_neg_cosine += pl_module.cosine(torch.unsqueeze(sub_text,0),original_image).mean()
+            dist_text_neg_cosine += pl_module.cosine(torch.unsqueeze(sub_text,0),original_text).mean()             
+        
         ret["text_image_neg_dist"] = dist_image_neg_dist / text_representation.shape[0]
         ret["text_text_neg_dist"]  = dist_text_neg_dist / text_representation.shape[0]
+        ret["text_image_neg_cosine"] = dist_image_neg_cosine / text_representation.shape[0]
+        ret["text_text_neg_cosine"]  = dist_text_neg_cosine / text_representation.shape[0]
         
         ret["text_text_dist"] = torch.linalg.norm(text_representation - original_text, dim=1).mean()
         ret["text_image_dist"] = torch.linalg.norm(text_representation - original_image, dim=1).mean()
+        ret["text_text_cosine"] = pl_module.cosine(text_representation,original_text).mean()
+        ret["text_image_cosine"] = pl_module.cosine(text_representation,original_image).mean()
         
-        loss = loss + on_diag + pl_module.adv_lr * off_diag
-        loss_num += 1
         
     ret["barlowtwins_loss"] = loss / loss_num  # * pl_module.loss_weight
 
@@ -495,31 +532,51 @@ def compute_barlowtwins_contrastive(pl_module, batch,batch_idx):
     loss = getattr(pl_module, f"{phase}_barlowtwins_loss")(ret["barlowtwins_loss"])
     pl_module.log(f"barlowtwins/{phase}/loss", loss)
     
-    # pl_module.log(f"barlowtwins_dist_{phase}/original_img_txt_dist", torch.linalg.norm(original_image - original_text, dim=1).mean())
+    pl_module.log(f"barlowtwins_dist_{phase}/Original/cosine/img_txt", pl_module.cosine(original_image,original_text).mean())
     if pl_module.image_view:
-        pl_module.log(f"barlowtwins_dist_{phase}/img_img_dist", ret["image_image_dist"])
-        pl_module.log(f"barlowtwins_dist_{phase}/img_txt_dist", ret["image_text_dist"])
+        # L2 distance
+        pl_module.log(f"barlowtwins_dist_{phase}_img_img/L2/Pos_img_img", ret["image_image_dist"])
+        pl_module.log(f"barlowtwins_dist_{phase}_img_img/L2/Neg_img_img", ret["image_image_neg_dist"])
+        pl_module.log(f"barlowtwins_dist_{phase}_img_img/L2/Neg-Pos_img_img", ret["image_image_neg_dist"]-ret["image_image_dist"])    
         
-        pl_module.log(f"barlowtwins_dist_{phase}/img_img_neg_dist", ret["image_image_neg_dist"])
-        pl_module.log(f"barlowtwins_dist_{phase}/img_txt_neg_dist", ret["image_text_neg_dist"])
+        pl_module.log(f"barlowtwins_dist_{phase}_img_txt/L2/Pos_img_txt", ret["image_text_dist"])
+        pl_module.log(f"barlowtwins_dist_{phase}_img_txt/L2/Neg_img_txt", ret["image_text_neg_dist"])
+        pl_module.log(f"barlowtwins_dist_{phase}_img_txt/L2/Neg-Pos_img_txt", ret["image_text_neg_dist"]-ret["image_text_dist"])    
         
-        pl_module.log(f"barlowtwins_dist_{phase}/img_img_neg-pos_value", ret["image_image_neg_dist"]-ret["image_image_dist"])
-        pl_module.log(f"barlowtwins_dist_{phase}/img_txt_neg-pos_value", ret["image_text_neg_dist"]-ret["image_text_dist"])        
+        # Cosine Distance
+        pl_module.log(f"barlowtwins_dist_{phase}_img_img/cosine/Pos_img_img", ret["image_image_cosine"])
+        pl_module.log(f"barlowtwins_dist_{phase}_img_img/cosine/Neg_img_img", ret["image_image_neg_cosine"])
+        pl_module.log(f"barlowtwins_dist_{phase}_img_img/cosine/Neg-Pos_img_img", ret["image_image_neg_cosine"]-ret["image_image_cosine"])    
+        
+        pl_module.log(f"barlowtwins_dist_{phase}_img_txt/cosine/Pos_img_txt", ret["image_text_cosine"])
+        pl_module.log(f"barlowtwins_dist_{phase}_img_txt/cosine/Neg_img_txt", ret["image_text_neg_cosine"])
+        pl_module.log(f"barlowtwins_dist_{phase}_img_txt/cosine/Neg-Pos_img_txt", ret["image_text_neg_cosine"]-ret["image_text_cosine"])           
+        
+        # Loss_invariance and Loss redundancy
         loss_invariance_img = getattr(pl_module, f"{phase}_barlowtwins_loss_invariance_img")(ret["barlowtwins_loss_invariance_img"])
         pl_module.log(f"barlowtwins/{phase}/barlowtwins_loss_invariance_img", loss_invariance_img)  
         loss_redundancy_img = getattr(pl_module, f"{phase}_barlowtwins_loss_redundancy_img")(ret["barlowtwins_loss_redundancy_img"])
         pl_module.log(f"barlowtwins/{phase}/barlowtwins_loss_redundancy_img", loss_redundancy_img)  
         
-
+        
     if pl_module.text_view:
-        pl_module.log(f"barlowtwins_dist_{phase}/txt_txt_dist", ret["text_text_dist"])
-        pl_module.log(f"barlowtwins_dist_{phase}/txt_img_dist", ret["text_image_dist"])
+        # L2 distance
+        pl_module.log(f"barlowtwins_dist_{phase}_txt_txt/L2/Pos_txt_txt", ret["text_text_dist"])
+        pl_module.log(f"barlowtwins_dist_{phase}_txt_txt/L2/Neg_txt_txt", ret["text_text_neg_dist"])        
+        pl_module.log(f"barlowtwins_dist_{phase}_txt_txt/L2/Neg-Pos_txt_txt", ret["text_text_neg_dist"]-ret["text_text_dist"])          
+        pl_module.log(f"barlowtwins_dist_{phase}_txt_img/L2/Pos_txt_img", ret["text_image_dist"])
+        pl_module.log(f"barlowtwins_dist_{phase}_txt_img/L2/Neg_txt_img", ret["text_image_neg_dist"])
+        pl_module.log(f"barlowtwins_dist_{phase}_txt_img/L2/Neg-Pos_txt_img", ret["text_image_neg_dist"]-ret["text_image_dist"])
         
-        pl_module.log(f"barlowtwins_dist_{phase}/txt_img_neg_dist", ret["text_image_neg_dist"])
-        pl_module.log(f"barlowtwins_dist_{phase}/txt_txt_neg_dist", ret["text_text_neg_dist"])
+        # Cosine Distance   
+        pl_module.log(f"barlowtwins_dist_{phase}_txt_txt/cosine/Pos_txt_txt", ret["text_text_cosine"])
+        pl_module.log(f"barlowtwins_dist_{phase}_txt_txt/cosine/Neg_txt_txt", ret["text_text_neg_cosine"])        
+        pl_module.log(f"barlowtwins_dist_{phase}_txt_txt/cosine/Neg-Pos_txt_txt", ret["text_text_neg_cosine"]-ret["text_text_cosine"])          
+        pl_module.log(f"barlowtwins_dist_{phase}_txt_img/cosine/Pos_txt_img", ret["text_image_cosine"])
+        pl_module.log(f"barlowtwins_dist_{phase}_txt_img/cosine/Neg_txt_img", ret["text_image_neg_cosine"])
+        pl_module.log(f"barlowtwins_dist_{phase}_txt_img/cosine/Neg-Pos_txt_img", ret["text_image_neg_cosine"]-ret["text_image_cosine"])        
         
-        pl_module.log(f"barlowtwins_dist_{phase}/txt_img_neg-pos_value", ret["text_image_neg_dist"]-ret["text_image_dist"])
-        pl_module.log(f"barlowtwins_dist_{phase}/txt_txt_neg-pos_value", ret["text_text_neg_dist"]-ret["text_text_dist"])                      
+        # Loss_invariance and Loss redundancy
         loss_invariance_text = getattr(pl_module, f"{phase}_barlowtwins_loss_invariance_text")(ret["barlowtwins_loss_invariance_text"])
         pl_module.log(f"barlowtwins/{phase}/barlowtwins_loss_invariance_text", loss_invariance_text)  
         loss_redundancy_text = getattr(pl_module, f"{phase}_barlowtwins_loss_redundancy_text")(ret["barlowtwins_loss_redundancy_text"])
