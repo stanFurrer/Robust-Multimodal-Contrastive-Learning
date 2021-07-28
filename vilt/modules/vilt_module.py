@@ -1,6 +1,6 @@
 #### New
-from attack.greedy_attack_vilt import GreedyAttack_moco, GreedyAttack_barlowtwins, GreedyAttack_nlvr2
-from attack.pgd_attack_vilt import PGDAttack_moco, PGDAttack_bartlowtwins, PGDAttack_nlvr2
+from attack.greedy_attack_vilt import GreedyAttack_moco, GreedyAttack_barlowtwins, GreedyAttack_nlvr2, GreedyAttack_irtr
+from attack.pgd_attack_vilt import PGDAttack_moco, PGDAttack_bartlowtwins, PGDAttack_nlvr2, PGDAttack_irtr
 
 import os
 import time
@@ -83,11 +83,11 @@ class ViLTransformerSS(pl.LightningModule):
             self.text_attack = config["text_attack"]
             self.image_attack = config["image_attack"]
             self.num_negative = config["num_negative"]
-            self.register_buffer("text_queue", torch.randn(128, self.num_negative))
-            self.text_queue = nn.functional.normalize(self.text_queue, dim=0)
+            self.register_buffer("text_queue", torch.zeros(128, self.num_negative))
+            # self.text_queue = nn.functional.normalize(self.text_queue, dim=0)
             self.register_buffer("text_queue_ptr", torch.zeros(1, dtype=torch.long))
-            self.register_buffer("image_queue", torch.randn(128, self.num_negative))
-            self.image_queue = nn.functional.normalize(self.image_queue, dim=0)
+            self.register_buffer("image_queue", torch.zeros(128, self.num_negative))
+            # self.image_queue = nn.functional.normalize(self.image_queue, dim=0)
             self.register_buffer("image_queue_ptr", torch.zeros(1, dtype=torch.long))
             
             if self.text_attack:
@@ -178,6 +178,22 @@ class ViLTransformerSS(pl.LightningModule):
             self.margin = 0.2
             for p in self.itm_score.parameters():
                 p.requires_grad = False
+                
+        if self.hparams.config["loss_names"]["irtr_attacked"] > 0:
+            self.rank_output = nn.Linear(hs, 1)
+            self.rank_output.weight.data = self.itm_score.fc.weight.data[1:, :]
+            self.rank_output.bias.data = self.itm_score.fc.bias.data[1:]
+            self.margin = 0.2
+            for p in self.itm_score.parameters():
+                p.requires_grad = False
+            self.image_attack = config["image_attack"]
+            self.text_attack = config["text_attack"]
+            if config["text_attack"]:
+                print("----Loading GreedyAttack_cross_entropy ----")
+                self.greedy_attacker = GreedyAttack_irtr(config)
+                print("----Greedy GreedyAttack_cross_entropy DONE ----")
+            if config["image_attack"]:
+                self.pgd_attacker = PGDAttack_irtr(config)
 
         vilt_utils.set_metrics(self)
         self.current_tasks = list()
@@ -385,6 +401,10 @@ class ViLTransformerSS(pl.LightningModule):
         # Image Retrieval and Text Retrieval
         if "irtr" in self.current_tasks:
             ret.update(objectives.compute_irtr(self, batch))
+
+        # Image Retrieval and Text Retrieval
+        if "irtr_attacked" in self.current_tasks:
+            ret.update(objectives.compute_irtr_attacked(self, batch))
 
         # MoCo Contrasive framework
         if "moco" in self.current_tasks:

@@ -13,7 +13,8 @@ def _loss_names(d):
         "vqa": 0,
         "nlvr2": 0,
         "irtr": 0,
-        "nlvr2_attacked":0
+        "irtr_attacked": 0,
+        "nlvr2_attacked": 0
     }
     ret.update(d)
     return ret
@@ -125,8 +126,8 @@ def task_moco():
     num_negative = 65536
     momentum = 0.999
     temperature = 0.07
-    text_attack = True
-    image_attack = True
+    text_attack = False
+    image_attack = False
     loss_names = _loss_names({"moco": 1})
     # batch_size = 4096
     batch_size = 128
@@ -137,10 +138,10 @@ def task_moco():
     # PGD
     adv_steps_img = 5
     adv_lr_img = 0.7
-    adv_max_norm_img = 0.1
+    adv_max_norm_img = 0.0
     #Geometric
     n_candidates = 10
-    max_loops = 4
+    max_loops = 10
     sim_thred = 0.5
     cos_sim = True
     synonym = "cos_sim"
@@ -324,6 +325,37 @@ def task_finetune_irtr_coco_randaug():
     draw_false_text = 15
     learning_rate = 1e-4
 
+
+@ex.named_config
+def task_finetune_irtr_coco_randaug_attacked():
+    exp_name = "finetune_irtr_coco_randaug_attacked"
+    datasets = ["coco"]
+    train_transform_keys = ["pixelbert_randaug"]
+    loss_names = _loss_names({"itm": 0.5, "irtr_attacked": 1})
+    batch_size = 256
+    max_epoch = 10
+    max_steps = None
+    warmup_steps = 0.1
+    get_recall_metric = False
+    draw_false_text = 15
+    learning_rate = 1e-4
+    test_only = True
+    # Attacks parameters
+    text_attack = False
+    image_attack = False
+    # PGD
+    adv_steps_img = 5
+    adv_lr_img = 0.7
+    adv_max_norm_img = 0.2
+    attack_idx = [False, True]
+    #Geometric
+    n_candidates = 10
+    max_loops = 4
+    sim_thred = 0.5
+    cos_sim = True
+    synonym = "cos_sim"
+    embedding_path = './attack/counter-fitted-vectors.txt'
+    sim_path = './attack/cos_sim_counter_fitting.npy'
 
 @ex.named_config
 def task_finetune_irtr_f30k():

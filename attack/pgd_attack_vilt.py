@@ -1,7 +1,7 @@
 import torch
 from copy import deepcopy
 import torch.nn as nn
-
+from einops import rearrange
 
 class PGDAttack:
     def __init__(self, config, contrastive_framework):
@@ -325,3 +325,86 @@ class PGDAttack_nlvr2(PGDAttack):
                     img_delta_1 = torch.clamp(img_delta_1, -self.adv_max_norm_img, self.adv_max_norm_img).detach()
         
         return img_delta_0, img_delta_1
+
+
+class PGDAttack_irtr(PGDAttack):
+    def __init__(self, config):
+        super().__init__(config, "irtr")
+        # a mini ViLTransformerSS
+        self.rank_output = None
+    
+    def build_mini_vilt(self, pl_module):
+        self.pl_module = pl_module
+        self.text_embeddings = deepcopy(pl_module.text_embeddings)
+        self.token_type_embeddings = deepcopy(pl_module.token_type_embeddings)
+        self.transformer = deepcopy(pl_module.transformer)
+        self.pooler = deepcopy(pl_module.pooler)
+        self.rank_output = deepcopy(pl_module.rank_output)
+    
+    def vilt_zero_grad(self):
+        self.text_embeddings.zero_grad()
+        self.transformer.zero_grad()
+        self.token_type_embeddings.zero_grad()
+        self.pooler.zero_grad()
+        self.rank_output.zero_grad()
+    
+    def pgd_attack(self, pl_module, batch, k_text=None):
+        self.build_mini_vilt(pl_module)
+        loss_fct = nn.CrossEntropyLoss()
+        # Get the original img
+        img_init = batch['image'][0]
+        # Initialize the delta as zero vectors
+        img_delta = torch.zeros_like(img_init)
+        self.vilt_zero_grad()
+        for astep in range(self.adv_steps_img):
+            # Need to get the gradient for each batch of image features
+            img_delta.requires_grad_(True)
+            with torch.enable_grad():
+                batch['image'][0] = (img_init + img_delta)  # .to(pl_module.device)
+                _bs, _c, _h, _w = batch["image"][0].shape
+                false_len = pl_module.hparams.config["draw_false_text"]
+                text_ids = torch.stack(
+                    [batch[f"false_text_{i}_ids"] for i in range(false_len)], dim=1
+                )
+                text_masks = torch.stack(
+                    [batch[f"false_text_{i}_masks"] for i in range(false_len)], dim=1
+                )
+                text_labels = torch.stack(
+                    [batch[f"false_text_{i}_labels"] for i in range(false_len)], dim=1
+                )
+
+                text_ids = torch.cat([batch["text_ids"].unsqueeze(1), text_ids], dim=1)
+                text_masks = torch.cat([batch["text_masks"].unsqueeze(1), text_masks], dim=1)
+                text_labels = torch.cat([batch["text_labels"].unsqueeze(1), text_labels], dim=1)
+                images = batch["image"][0].unsqueeze(1).expand(_bs, false_len + 1, _c, _h, _w)
+
+                infer = self.infer(
+                    {
+                        "image": [rearrange(images, "bs fs c h w -> (bs fs) c h w")],
+                        "text_ids": rearrange(text_ids, "bs fs tl -> (bs fs) tl"),
+                        "text_masks": rearrange(text_masks, "bs fs tl -> (bs fs) tl"),
+                        "text_labels": rearrange(text_labels, "bs fs tl -> (bs fs) tl"),
+                    }
+                )
+                score = self.rank_output(infer["cls_feats"])[:, 0]
+                score = rearrange(score, "(bs fs) -> bs fs", bs=_bs, fs=false_len + 1)
+                answer = torch.zeros(_bs).to(score).long()
+                loss = loss_fct(score, answer)
+                # calculate x.grad
+                loss.backward()
+                
+            # Get gradient
+            img_delta_grad = img_delta.grad.clone().detach().float()
+            # Get inf_norm gradient (It will be used to normalize the img_delta_grad)
+            denorm = torch.norm(img_delta_grad.view(img_delta_grad.size(0), -1), dim=1, p=float("inf")).view(-1, 1, 1, 1)
+            # Clip gradient to Lower Bound
+            denorm = torch.clamp(denorm, min=1e-8)
+            # calculate delta_step  with format img_delta
+            img_delta_step = (self.adv_lr_img * img_delta_grad / denorm).to(img_delta)
+            # Add the calculated step to img_delta (The perturbation)
+            img_delta = (img_delta + img_delta_step).detach()
+            # clip the delta if needed
+            if self.adv_max_norm_img > 0:
+                img_delta = torch.clamp(img_delta, -self.adv_max_norm_img, self.adv_max_norm_img).detach()
+            
+        return img_delta

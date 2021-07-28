@@ -62,7 +62,8 @@ def main(_config):
     )
         
     lr_callback = pl.callbacks.LearningRateMonitor(logging_interval="step")
-    callbacks = [checkpoint_callback, lr_callback]
+    # callbacks = [checkpoint_callback, lr_callback]
+    callbacks = [lr_callback]
 
     num_gpus = (
         _config["num_gpus"]
