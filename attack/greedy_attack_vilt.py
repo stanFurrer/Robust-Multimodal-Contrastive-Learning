@@ -269,7 +269,6 @@ class GreedyAttack:
                                                             device,
                                                             k_modality # k_text
                                                            )
-        
         sep_idx = (input_ids == self.tokenizer._convert_token_to_id('[SEP]')).nonzero()
         assert len(sep_idx)  == batch_size                                            
         
@@ -291,7 +290,8 @@ class GreedyAttack:
                     continue
                 if idx.item() in self.replace_history[i]:
                     continue
-                if len(self.replace_history[i]) >= min(max_len, self.max_loops):
+                if self.changes_verification[i] >= min(max_len, self.max_loops):
+                #if len(self.replace_history[i]) >= min(max_len, self.max_loops):
                     continue
                 temp_idx = idx_int
                 break
@@ -368,14 +368,14 @@ class GreedyAttack:
                 self.words_to_sub_words[i][idx] = np.arange(position, position + length)
                 position += length
                 
-    def split_forward(self,batch, all_num, ori_z, k_image):
+    def split_forward(self,batch, all_num, ori_z, k_modality):
         """Do a Forward pass to get the text Representation"""
         raise NotImplementedError(f"split_forward of {self.contrastive_framework} isn't implemented.")
         
     def adv_attack_samples(self, 
                            pl_module,            
                            batch,           
-                           k_image, # k_text
+                           k_modality, # k_text
                           ):
         raise NotImplementedError(f"adv_attack_samples of {self.contrastive_framework} isn't implemented.")  
               
@@ -532,7 +532,7 @@ class GreedyAttack_moco(GreedyAttack):
         
         self.replace_history = [set() for _ in range(batch_size)]
         # Test
-        changes_verification = [0] * batch_size #
+        self.changes_verification = [0] * batch_size #
         
         
         for iter_idx in range(self.max_loops):
@@ -616,7 +616,7 @@ class GreedyAttack_moco(GreedyAttack):
                     continue
                     
                 if cur_z[selected_idx] > 0:
-                    changes_verification[i]+=1 #
+                    self.changes_verification[i]+=1 #
                     cur_words[i] = all_new_text[int(selected_idx) + count].split(' ')
                     self.words_to_sub_words[i] = {}
                     position = 0
@@ -648,7 +648,7 @@ class GreedyAttack_moco(GreedyAttack):
                 'num_changes'   : np.mean(num_changes),
                 'change_rate'   : np.mean(change_rate),
                 'Problem'       : Problem,
-                'changes_verification'       : changes_verification} 
+                'changes_verification'       : self.changes_verification} 
 
 class GreedyAttack_barlowtwins(GreedyAttack):
     def __init__(self, config):
@@ -754,10 +754,17 @@ class GreedyAttack_barlowtwins(GreedyAttack):
             image_representation, text_representation = self.barlowtwins_head(infer['image_feats'], infer['text_feats'])
             image_representation = torch.split(image_representation, all_num)
             text_representation = torch.split(text_representation, all_num)
+           
+            c = torch.mm(ori_z[1].T, k_modality) / ori_z[1].shape[0] 
+            on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
+            off_diag = off_diagonal(c).pow_(2).sum()
+            ori_loss = on_diag + self.pl_module.adv_lr * off_diag             
+            
+            
             # print(all_num, len(image_splie), len(text_splie))
             for i, (img_split, txt_split) in enumerate(zip(image_representation, text_representation)):
                 cur_loss = []
-                cur_max_loss, cur_max_loss_idx = -1, -1
+                cur_max_loss, cur_max_loss_idx = ori_loss, -1
                 t_save = (ori_z[0][i], ori_z[1][i])
                 for j, (img, txt) in enumerate(zip(img_split, txt_split)):
                     ori_z[0][i], ori_z[1][i] = img, txt
@@ -779,8 +786,8 @@ class GreedyAttack_barlowtwins(GreedyAttack):
                 all_loss.append((cur_loss, cur_max_loss_idx))
                 ori_z[0][i], ori_z[1][i] = t_save[0], t_save[1]
             
-        # print(all_num)
-        # print([len(x[0]) for x in all_loss])
+        #print("This is all_num",all_num)
+        #print([x[0][x[1]] for x in all_loss])
         return all_loss
     
     def adv_attack_samples(self, pl_module, batch, k_modality=None): #k_text
@@ -802,7 +809,7 @@ class GreedyAttack_barlowtwins(GreedyAttack):
         self.build_mini_vilt(pl_module)
         
         self.replace_history = [set() for _ in range(batch_size)]
-        changes_verification = [0] * batch_size  #
+        self.changes_verification = [0] * batch_size  #
         for iter_idx in range(self.max_loops):
             # ori_z    : text_representation
             # vector_z : gradient_projector (project.text.linear2)
@@ -878,8 +885,8 @@ class GreedyAttack_barlowtwins(GreedyAttack):
                     count += len(cur_z)
                     continue
                     
-                if cur_z[selected_idx] > loss_z:
-                    changes_verification[i] += 1
+                if selected_idx > 0:
+                    self.changes_verification[i] += 1
                     cur_words[i] = all_new_text[int(selected_idx) + count].split(' ')
                     self.words_to_sub_words[i] = {}
                     position = 0
@@ -889,7 +896,7 @@ class GreedyAttack_barlowtwins(GreedyAttack):
                             break
                         self.words_to_sub_words[i][idx] = np.arange(position, position + length)
                         position += length
-                
+
                 count += len(cur_z)
             text = [' '.join(x) for x in cur_words]
             txt_input_ids, text_masks = self.get_inputs(text, self.tokenizer, self.device)
@@ -912,7 +919,7 @@ class GreedyAttack_barlowtwins(GreedyAttack):
                 'num_changes'   : np.mean(num_changes),
                 'change_rate'   : np.mean(change_rate),
                 'Problem'       : Problem,
-                'changes_verification': changes_verification}
+                'changes_verification': self.changes_verification}
     
 class GreedyAttack_nlvr2(GreedyAttack):
     def __init__(self, config):
@@ -1052,7 +1059,7 @@ class GreedyAttack_nlvr2(GreedyAttack):
         
         self.replace_history = [set() for _ in range(batch_size)]
         # Test
-        changes_verification = [0] * batch_size  #
+        self.changes_verification = [0] * batch_size  #
         
         for iter_idx in range(self.max_loops):
             # ori_z    : text_representation
@@ -1072,7 +1079,7 @@ class GreedyAttack_nlvr2(GreedyAttack):
                                                                         words=cur_words,
                                                                         batch_size=batch_size)
             
-            # print("This is all_num",all_num)
+            
             # all_new_false_image_0 = []
             # all_new_replica = []
             # all_new_raw_index = []
@@ -1136,7 +1143,7 @@ class GreedyAttack_nlvr2(GreedyAttack):
                     continue
                 
                 if cur_z[selected_idx] > 0:
-                    changes_verification[i] += 1  #
+                    self.changes_verification[i] += 1  #
                     cur_words[i] = all_new_text[int(selected_idx) + count].split(' ')
                     self.words_to_sub_words[i] = {}
                     position = 0
@@ -1150,6 +1157,7 @@ class GreedyAttack_nlvr2(GreedyAttack):
             text = [' '.join(x) for x in cur_words]
             txt_input_ids, text_masks = \
                 self.get_inputs(text, self.tokenizer, self.device)
+        
         
         num_changes = []
         change_rate = []
@@ -1168,4 +1176,4 @@ class GreedyAttack_nlvr2(GreedyAttack):
                 'num_changes': np.mean(num_changes),
                 'change_rate': np.mean(change_rate),
                 'Problem': Problem,
-                'changes_verification': changes_verification}          
+                'changes_verification': self.changes_verification}          

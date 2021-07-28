@@ -148,9 +148,9 @@ def compute_geometric(pl_module, batch, loss_name, k_modality=None):
             print("Real sentence----: ",real_sentence[i])
             print("Attacked sentence: ",attack_words["text"][i])
 
-        txt_original_attacked   = {"original": real_sentence,
-                                   "attacked": attack_words["text"]
-                                  }
+     #   txt_original_attacked   = {"original": real_sentence,
+     #                              "attacked": attack_words["text"]
+     #                             }
         
     batch["text"]          = attack_words["text"]
     batch["text_ids"]     = attack_words["txt_input_ids"]
@@ -219,8 +219,7 @@ def compute_moco_contrastive(pl_module, batch,batch_idx):
         k_image = nn.functional.normalize(image_representation_k, dim=1)
 
     if pl_module.image_view:
-        if pl_module.augmentation : 
-            print("Augmentation images")            
+        if pl_module.augmentation :            
             augmented_batch = image_augmentation(pl_module, deepcopy(batch))
         else : 
             augmented_batch = compute_pgd(pl_module, deepcopy(batch), "moco", k_modality=k_text)

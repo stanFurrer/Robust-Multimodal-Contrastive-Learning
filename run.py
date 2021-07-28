@@ -56,7 +56,7 @@ def main(_config):
             #name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}',
         )         
     else : 
-        #name    = "Barlow_Twins_fully_uni_modal"
+        #name    = "Barlow_Twins_fully_cross_modal"
         #version = "Geom" 
         # For experimence Purposes 
         logger = pl.loggers.TensorBoardLogger(
