@@ -235,14 +235,14 @@ def compute_moco_contrastive(pl_module, batch):
     
         labels = torch.zeros(logits.shape[0], dtype=torch.long)
         labels = labels.type_as(logits)
-        print(prediction["img_img"])
-        print(logits.argmax(-1))
+        # print(prediction["img_img"])
+        # print(logits.argmax(-1))
         # print((~(logits.argmax(-1) == prediction["img_img"])).sum())
         if phase == "train":
-            print((~(logits.argmax(-1) == prediction["img_img"])).sum())
-            print(logits.shape[0])
+            # print((~(logits.argmax(-1) == prediction["img_img"])).sum())
+            # print(logits.shape[0])
             pl_module.log(f"moco_attack/img_success_rate", (~(logits.argmax(-1) == prediction["img_img"])).sum()/logits.shape[0])
-            print("success rate:", (~(logits.argmax(-1) == prediction["img_img"])).sum()/logits.shape[0])
+            # print("success rate:", (~(logits.argmax(-1) == prediction["img_img"])).sum()/logits.shape[0])
 
         ret["image_image_pos_dist"] = torch.linalg.norm(q-k_image, dim=1).mean()
         ret["image_image_pos_sim"] = cos_sim_fct(q, k_image).mean()
@@ -299,14 +299,14 @@ def compute_moco_contrastive(pl_module, batch):
     
         labels = torch.zeros(logits.shape[0], dtype=torch.long)
         labels = labels.type_as(logits)
-        print(logits.argmax(-1))
-        print(prediction["txt_txt"])
+        # print(logits.argmax(-1))
+        # print(prediction["txt_txt"])
         if phase == "train":
             # correct_mask = (prediction["txt_txt"] == 0)
-            print((~(logits.argmax(-1) == prediction["txt_txt"])).sum())
-            print(logits.shape[0])
+            # print((~(logits.argmax(-1) == prediction["txt_txt"])).sum())
+            # print(logits.shape[0])
             pl_module.log(f"moco_attack/success_rate", (~(logits.argmax(-1) == prediction["txt_txt"])).sum() / logits.shape[0])
-            print("success rate:", (~(logits.argmax(-1) == prediction["txt_txt"])).sum() / logits.shape[0])
+            # print("success rate:", (~(logits.argmax(-1) == prediction["txt_txt"])).sum() / logits.shape[0])
         
         ret["text_text_pos_dist"] = torch.linalg.norm(q - k_text, dim=1).mean()
         ret["text_text_pos_sim"] = cos_sim_fct(q, k_text).mean()
@@ -378,7 +378,7 @@ def compute_moco_contrastive(pl_module, batch):
         pl_module.log(f"moco_dist_{phase}/Neg-Pos_txt_txt_L2", ret["text_text_neg_dist"] - ret["text_text_pos_dist"])
         pl_module.log(f"moco_dist_{phase}/Pos_txt_txt_cosine", ret["text_text_pos_sim"])
         pl_module.log(f"moco_dist_{phase}/Neg_txt_txt_cosine", ret["text_text_neg_sim"])
-        pl_module.log(f"moco_dist_{phase}/Pos-Neg_txt_txt_cosine", ret["text_text_neg_sim"] - ret["text_text_pos_sim"])
+        pl_module.log(f"moco_dist_{phase}/Neg-Pos_txt_txt_cosine", ret["text_text_neg_sim"] - ret["text_text_pos_sim"])
 
         # pl_module.log(f"moco_dist_{phase}_txt_img/txt_img_pos_dist", ret["text_image_pos_dist"])
         # pl_module.log(f"moco_dist_{phase}_txt_img/txt_img_neg_dist", ret["text_image_neg_dist"])

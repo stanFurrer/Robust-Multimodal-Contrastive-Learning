@@ -287,7 +287,7 @@ class GreedyAttack:
             # Return the k biggest score in norm for each sentence (Only the indices)
             # eg. tensor([ 6, 12, 11, 10, 4,  5])
             indices = torch.topk(torch.tensor(norms), k=len(norms)).indices
-            max_len = int(sep_idx[i][1] * 0.4)  # We change at most 20 % of the words
+            max_len = int(sep_idx[i][1] * 0.2)  # We change at most 20 % of the words
             
             for idx in indices:
                 idx_int  = idx.item() 
@@ -297,7 +297,8 @@ class GreedyAttack:
                     continue
                 if idx.item() in self.replace_history[i]:
                     continue
-                if len(self.replace_history[i]) >= min(max_len, self.max_loops):
+                # if len(self.replace_history[i]) >= min(max_len, self.max_loops):
+                if self.changes_verification[i] >= min(max_len, self.max_loops):
                     continue
                 temp_idx = idx_int
                 break
@@ -534,7 +535,7 @@ class GreedyAttack_moco(GreedyAttack):
         
         self.replace_history = [set() for _ in range(batch_size)]
         # Test
-        changes_verification = [0] * batch_size #
+        self.changes_verification = [0] * batch_size #
         
         
         for iter_idx in range(self.max_loops):
@@ -614,7 +615,7 @@ class GreedyAttack_moco(GreedyAttack):
                     continue
                     
                 if selected_idx > 0:
-                    changes_verification[i] += 1 #
+                    self.changes_verification[i] += 1 #
                     cur_words[i] = all_new_text[int(selected_idx) + count].split(' ')
                     self.words_to_sub_words[i] = {}
                     position = 0
@@ -646,7 +647,7 @@ class GreedyAttack_moco(GreedyAttack):
                 'num_changes'   : np.mean(num_changes),
                 'change_rate'   : np.mean(change_rate),
                 'Problem'       : Problem,
-                'changes_verification'       : changes_verification}
+                'changes_verification'       : self.changes_verification}
     
 
 class GreedyAttack_barlowtwins(GreedyAttack):
@@ -1048,7 +1049,7 @@ class GreedyAttack_nlvr2(GreedyAttack):
         
         self.replace_history = [set() for _ in range(batch_size)]
         # Test
-        changes_verification = [0] * batch_size  #
+        self.changes_verification = [0] * batch_size  #
         
         for iter_idx in range(self.max_loops):
             # ori_z    : text_representation
@@ -1132,7 +1133,7 @@ class GreedyAttack_nlvr2(GreedyAttack):
                     continue
                 
                 if cur_z[selected_idx] > 0:
-                    changes_verification[i] += 1  #
+                    self.changes_verification[i] += 1  #
                     cur_words[i] = all_new_text[int(selected_idx) + count].split(' ')
                     self.words_to_sub_words[i] = {}
                     position = 0
@@ -1164,7 +1165,7 @@ class GreedyAttack_nlvr2(GreedyAttack):
                 'num_changes': np.mean(num_changes),
                 'change_rate': np.mean(change_rate),
                 'Problem': Problem,
-                'changes_verification': changes_verification}
+                'changes_verification': self.changes_verification}
 
 
 class GreedyAttack_irtr(GreedyAttack):
@@ -1348,7 +1349,7 @@ class GreedyAttack_irtr(GreedyAttack):
         self.replace_history = [set() for _ in range(batch_size)]
         false_len = self.pl_module.hparams.config["draw_false_text"]
         # Test
-        changes_verification = [0] * batch_size  #
+        self.changes_verification = [0] * batch_size  #
         
         for iter_idx in range(self.max_loops):
             # ori_z    : text_representation
@@ -1415,7 +1416,7 @@ class GreedyAttack_irtr(GreedyAttack):
                     count += len(cur_z)
                     continue
                 if selected_idx > 0:
-                    changes_verification[i] += 1  #
+                    self.changes_verification[i] += 1  #
                     cur_words[i] = all_new_text[int(selected_idx) + count].split(' ')
                     self.words_to_sub_words[i] = {}
                     position = 0
@@ -1449,4 +1450,4 @@ class GreedyAttack_irtr(GreedyAttack):
                 'num_changes': np.mean(num_changes),
                 'change_rate': np.mean(change_rate),
                 'Problem': Problem,
-                'changes_verification': changes_verification}
+                'changes_verification': self.changes_verification}
