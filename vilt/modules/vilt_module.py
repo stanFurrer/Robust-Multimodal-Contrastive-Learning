@@ -180,12 +180,7 @@ class ViLTransformerSS(pl.LightningModule):
                 p.requires_grad = False
                 
         if self.hparams.config["loss_names"]["irtr_attacked"] > 0:
-            self.rank_output = nn.Linear(hs, 1)
-            self.rank_output.weight.data = self.itm_score.fc.weight.data[1:, :]
-            self.rank_output.bias.data = self.itm_score.fc.bias.data[1:]
-            self.margin = 0.2
-            for p in self.itm_score.parameters():
-                p.requires_grad = False
+            self.moco_head = heads.MOCOHead(config["hidden_size"], config["hidden_size"], 128)
             self.image_attack = config["image_attack"]
             self.text_attack = config["text_attack"]
             if config["text_attack"]:
@@ -403,8 +398,8 @@ class ViLTransformerSS(pl.LightningModule):
             ret.update(objectives.compute_irtr(self, batch))
 
         # Image Retrieval and Text Retrieval
-        if "irtr_attacked" in self.current_tasks:
-            ret.update(objectives.compute_irtr_attacked(self, batch))
+        # if "irtr_attacked" in self.current_tasks:
+        #     ret.update(objectives.compute_irtr_attacked(self, batch))
 
         # MoCo Contrasive framework
         if "moco" in self.current_tasks:

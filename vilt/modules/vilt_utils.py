@@ -7,7 +7,7 @@ from transformers import (
     get_cosine_schedule_with_warmup,
 )
 from vilt.modules.dist_utils import all_gather
-from vilt.modules.objectives import compute_irtr_recall
+from vilt.modules.objectives import compute_irtr_recall, compute_attacked_irtr_recall
 from vilt.gadgets.my_metrics import Accuracy, VQAScore, Scalar, change_rate
 
 def set_metrics(pl_module):
@@ -78,8 +78,12 @@ def epoch_wrapup(pl_module):
     the_metric = 0
 
     if pl_module.hparams.config["get_recall_metric"] and not pl_module.training:
-        (ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10) = compute_irtr_recall(pl_module)
+        if pl_module.hparams.config["loss_names"]["irtr_attacked"] > 0:
+            (ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10) = compute_attacked_irtr_recall(pl_module)
+        else:
+            (ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10) = compute_irtr_recall(pl_module)
         print((ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10), pl_module.global_step)
+        '''
         pl_module.logger.experiment.add_scalar(
             "recalls/ir_r1", ir_r1, pl_module.global_step
         )
@@ -98,6 +102,7 @@ def epoch_wrapup(pl_module):
         pl_module.logger.experiment.add_scalar(
             "recalls/tr_r10", tr_r10, pl_module.global_step
         )
+        '''
         the_metric += ir_r1.item() + tr_r1.item()
 
     for loss_name, v in pl_module.hparams.config["loss_names"].items():

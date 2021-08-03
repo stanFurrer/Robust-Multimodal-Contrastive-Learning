@@ -108,7 +108,7 @@ class BaseDataModule(LightningDataModule):
                 image_only=self.image_only,
             )
 
-    def make_no_false_val_dset(self, image_only=False):
+    def make_no_false_val_dset(self, image_only=False, max_num=-1):
         return self.dataset_cls_no_false(
             self.data_dir,
             self.val_transform_keys,
@@ -118,6 +118,7 @@ class BaseDataModule(LightningDataModule):
             draw_false_image=0,
             draw_false_text=0,
             image_only=image_only,
+            max_num=max_num,
         )
 
     def set_test_dataset(self):

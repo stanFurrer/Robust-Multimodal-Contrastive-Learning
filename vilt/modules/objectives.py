@@ -203,22 +203,19 @@ def compute_moco_contrastive(pl_module, batch):
     original_image = nn.functional.normalize(image_representation, dim=1)
     neg_img = pl_module.image_queue.clone().detach()
     neg_txt = pl_module.text_queue.clone().detach()
-    prediction = {}
+    # prediction = {}
     
-    l_pos = torch.einsum('nc,nc->n', [original_image, k_image]).unsqueeze(-1)
-    l_neg = torch.einsum('nc,ck->nk', [original_image, neg_img])
-    logits = torch.cat([l_pos, l_neg], dim=1)
-    logits /= pl_module.temperature
-    # print(original_image)
-    # print(k_image)
-    # print(neg_img.T[0])
-    prediction["img_img"] = logits.argmax(-1)
+    # l_pos = torch.einsum('nc,nc->n', [original_image, k_image]).unsqueeze(-1)
+    # l_neg = torch.einsum('nc,ck->nk', [original_image, neg_img])
+    # logits = torch.cat([l_pos, l_neg], dim=1)
+    # logits /= pl_module.temperature
+    # prediction["img_img"] = logits.argmax(-1)
     
-    l_pos = torch.einsum('nc,nc->n', [original_text, k_text]).unsqueeze(-1)
-    l_neg = torch.einsum('nc,ck->nk', [original_text, neg_txt])
-    logits = torch.cat([l_pos, l_neg], dim=1)
-    logits /= pl_module.temperature
-    prediction["txt_txt"] = logits.argmax(-1)
+    # l_pos = torch.einsum('nc,nc->n', [original_text, k_text]).unsqueeze(-1)
+    # l_neg = torch.einsum('nc,ck->nk', [original_text, neg_txt])
+    # logits = torch.cat([l_pos, l_neg], dim=1)
+    # logits /= pl_module.temperature
+    # prediction["txt_txt"] = logits.argmax(-1)
     
     if pl_module.image_attack:
         attacked_batch = compute_pgd(pl_module, deepcopy(batch), "moco", k_image)
@@ -235,14 +232,8 @@ def compute_moco_contrastive(pl_module, batch):
     
         labels = torch.zeros(logits.shape[0], dtype=torch.long)
         labels = labels.type_as(logits)
-        # print(prediction["img_img"])
-        # print(logits.argmax(-1))
-        # print((~(logits.argmax(-1) == prediction["img_img"])).sum())
-        if phase == "train":
-            # print((~(logits.argmax(-1) == prediction["img_img"])).sum())
-            # print(logits.shape[0])
-            pl_module.log(f"moco_attack/img_success_rate", (~(logits.argmax(-1) == prediction["img_img"])).sum()/logits.shape[0])
-            # print("success rate:", (~(logits.argmax(-1) == prediction["img_img"])).sum()/logits.shape[0])
+        # if phase == "train":
+        #     pl_module.log(f"moco_attack/img_success_rate", (~(logits.argmax(-1) == prediction["img_img"])).sum()/logits.shape[0])
 
         ret["image_image_pos_dist"] = torch.linalg.norm(q-k_image, dim=1).mean()
         ret["image_image_pos_sim"] = cos_sim_fct(q, k_image).mean()
@@ -253,8 +244,6 @@ def compute_moco_contrastive(pl_module, batch):
             sim += cos_sim_fct(sub_q.unsqueeze(0), neg_img.T).mean()
         ret["image_image_neg_dist"] = dist / q.shape[0]
         ret["image_image_neg_sim"] = sim / q.shape[0]
-        # ret["image_image_logits"] = logits
-        # ret["image_image_labels"] = labels
 
         loss_image_image = loss_fct(logits.float(), labels.long())
         pl_module.log(f"moco_loss/img_img_loss", loss_image_image)
@@ -263,26 +252,28 @@ def compute_moco_contrastive(pl_module, batch):
         
         # attacked image: close to the corresponding text; away from other text
         # neg_txt = pl_module.text_queue.clone().detach()
-        # l_pos = torch.einsum('nc,nc->n', [q, k_text]).unsqueeze(-1)
-        # l_neg = torch.einsum('nc,ck->nk', [q, neg_txt])
-        # logits = torch.cat([l_pos, l_neg], dim=1)
-        # logits /= pl_module.temperature
+        l_pos = torch.einsum('nc,nc->n', [q, k_text]).unsqueeze(-1)
+        l_neg = torch.einsum('nc,ck->nk', [q, neg_txt])
+        logits = torch.cat([l_pos, l_neg], dim=1)
+        logits /= pl_module.temperature
 
-        # labels = torch.zeros(logits.shape[0], dtype=torch.long)
-        # labels = labels.type_as(logits)
+        labels = torch.zeros(logits.shape[0], dtype=torch.long)
+        labels = labels.type_as(logits)
         
-        # ret["image_text_pos_dist"] = torch.linalg.norm(q - k_text, dim=1).mean()
-        # dist = 0
-        # for sub_q in q:
-        #     dist += torch.linalg.norm(sub_q - neg_txt.T, dim=1).mean()
-        # ret["image_text_neg_dist"] = dist / q.shape[0]
-        # ret["image_text_logits"] = logits
-        # ret["image_text_labels"] = labels
+        ret["image_text_pos_dist"] = torch.linalg.norm(q - k_text, dim=1).mean()
+        ret["image_text_pos_sim"] = cos_sim_fct(q, k_text).mean()
+        dist = 0
+        sim = 0
+        for sub_q in q:
+            dist += torch.linalg.norm(sub_q - neg_txt.T, dim=1).mean()
+            sim += cos_sim_fct(sub_q.unsqueeze(0), neg_txt.T).mean()
+        ret["image_text_neg_dist"] = dist / q.shape[0]
+        ret["image_text_neg_sim"] = sim / q.shape[0]
 
-        # loss_image_text = loss_fct(logits.float(), labels.long())
-        # pl_module.log(f"moco_loss/img_txt_loss", loss_image_text)
-        # loss = loss + loss_image_text
-        # loss_num += 1
+        loss_image_text = loss_fct(logits.float(), labels.long())
+        pl_module.log(f"moco_loss/img_txt_loss", loss_image_text)
+        loss = loss + loss_image_text
+        loss_num += 1
 
     if pl_module.text_attack:
         attacked_batch = compute_geometric(pl_module, deepcopy(batch), "moco", k_text)
@@ -299,14 +290,8 @@ def compute_moco_contrastive(pl_module, batch):
     
         labels = torch.zeros(logits.shape[0], dtype=torch.long)
         labels = labels.type_as(logits)
-        # print(logits.argmax(-1))
-        # print(prediction["txt_txt"])
-        if phase == "train":
-            # correct_mask = (prediction["txt_txt"] == 0)
-            # print((~(logits.argmax(-1) == prediction["txt_txt"])).sum())
-            # print(logits.shape[0])
-            pl_module.log(f"moco_attack/success_rate", (~(logits.argmax(-1) == prediction["txt_txt"])).sum() / logits.shape[0])
-            # print("success rate:", (~(logits.argmax(-1) == prediction["txt_txt"])).sum() / logits.shape[0])
+        # if phase == "train":
+        #     pl_module.log(f"moco_attack/success_rate", (~(logits.argmax(-1) == prediction["txt_txt"])).sum() / logits.shape[0])
         
         ret["text_text_pos_dist"] = torch.linalg.norm(q - k_text, dim=1).mean()
         ret["text_text_pos_sim"] = cos_sim_fct(q, k_text).mean()
@@ -317,8 +302,6 @@ def compute_moco_contrastive(pl_module, batch):
             sim += cos_sim_fct(sub_q.unsqueeze(0), neg_txt.T).mean()
         ret["text_text_neg_dist"] = dist / q.shape[0]
         ret["text_text_neg_sim"] = sim / q.shape[0]
-        # ret["text_text_logits"] = logits
-        # ret["text_text_labels"] = labels
 
         loss_text_text = loss_fct(logits.float(), labels.long())
         pl_module.log(f"moco_loss/txt_txt_loss", loss_text_text)
@@ -327,28 +310,28 @@ def compute_moco_contrastive(pl_module, batch):
 
         # attacked text: close to the corresponding image, away from other images
         # neg_img = pl_module.image_queue.clone().detach()
-        # l_pos = torch.einsum('nc,nc->n', [q, k_image]).unsqueeze(-1)
-        # l_neg = torch.einsum('nc,ck->nk', [q, neg_img])
-        # logits = torch.cat([l_pos, l_neg], dim=1)
-        # logits /= pl_module.temperature
+        l_pos = torch.einsum('nc,nc->n', [q, k_image]).unsqueeze(-1)
+        l_neg = torch.einsum('nc,ck->nk', [q, neg_img])
+        logits = torch.cat([l_pos, l_neg], dim=1)
+        logits /= pl_module.temperature
 
-        # labels = torch.zeros(logits.shape[0], dtype=torch.long)
-        # labels = labels.type_as(logits)
+        labels = torch.zeros(logits.shape[0], dtype=torch.long)
+        labels = labels.type_as(logits)
         
-        # ret["text_image_pos_dist"] = torch.linalg.norm(q - k_image, dim=1).mean()
-        # dist = 0
-        # for sub_q in q:
-        #     dist += torch.linalg.norm(sub_q - neg_img.T, dim=1).mean()
-        # ret["text_image_neg_dist"] = dist / q.shape[0]
-        # ret["text_image_pos_dist"] = torch.linalg.norm(q-k_image).mean()
-        # ret["text_image_neg_dist"] = torch.linalg.norm(q-neg_img, dim=1).mean()
-        # ret["text_image_logits"] = logits
-        # ret["text_image_labels"] = labels
+        ret["text_image_pos_dist"] = torch.linalg.norm(q - k_image, dim=1).mean()
+        ret["text_image_pos_sim"] = cos_sim_fct(q, k_image).mean()
+        dist = 0
+        sim = 0
+        for sub_q in q:
+            dist += torch.linalg.norm(sub_q - neg_img.T, dim=1).mean()
+            sim += cos_sim_fct(sub_q.unsqueeze(0), neg_img.T).mean()
+        ret["text_image_neg_dist"] = dist / q.shape[0]
+        ret["text_image_neg_sim"] = sim / q.shape[0]
 
-        # loss_text_image = loss_fct(logits.float(), labels.long())
-        # pl_module.log(f"moco_loss/txt_img__loss", loss_text_image)
-        # loss = loss + loss_text_image
-        # loss_num += 1
+        loss_text_image = loss_fct(logits.float(), labels.long())
+        pl_module.log(f"moco_loss/txt_img_loss", loss_text_image)
+        loss = loss + loss_text_image
+        loss_num += 1
 
     if phase == "train":
         _dequeue_and_enqueue(k_text, 'text')
@@ -359,7 +342,8 @@ def compute_moco_contrastive(pl_module, batch):
     loss = getattr(pl_module, f"{phase}_moco_loss")(ret["moco_loss"])
     pl_module.log(f"moco_loss/step/{phase}", loss)
     
-    pl_module.log(f"moco_dist_{phase}/img_txt_dist", torch.linalg.norm(original_image - original_text, dim=1).mean())
+    pl_module.log(f"moco_dist_{phase}/img_txt_L2", torch.linalg.norm(original_image - original_text, dim=1).mean())
+    pl_module.log(f"moco_dist_{phase}/img_txt_cosine", cos_sim_fct(original_image, original_text).mean())
     
     if pl_module.image_attack:
         pl_module.log(f"moco_dist_{phase}/Pos_img_img_L2", ret["image_image_pos_dist"])
@@ -368,9 +352,12 @@ def compute_moco_contrastive(pl_module, batch):
         pl_module.log(f"moco_dist_{phase}/Pos_img_img_cosine", ret["image_image_pos_sim"])
         pl_module.log(f"moco_dist_{phase}/Neg_img_img_cosine", ret["image_image_neg_sim"])
         pl_module.log(f"moco_dist_{phase}/Neg-Pos_img_img_cosine", ret["image_image_neg_sim"] - ret["image_image_pos_sim"])
-        # pl_module.log(f"moco_dist_{phase}_img_txt/img_txt_pos_dist", ret["image_text_pos_dist"])
-        # pl_module.log(f"moco_dist_{phase}_img_txt/img_txt_neg_dist", ret["image_text_neg_dist"])
-        # pl_module.log(f"moco_dist_{phase}_img_txt/img_txt_difference", ret["image_text_neg_dist"] - ret["image_text_pos_dist"])
+        pl_module.log(f"moco_dist_{phase}/Pos_img_txt_L2", ret["image_text_pos_dist"])
+        pl_module.log(f"moco_dist_{phase}/Neg_img_txt_L2", ret["image_text_neg_dist"])
+        pl_module.log(f"moco_dist_{phase}/Neg-Pos_img_txt_L2", ret["image_text_neg_dist"] - ret["image_text_pos_dist"])
+        pl_module.log(f"moco_dist_{phase}/Pos_img_txt_cosine", ret["image_text_pos_sim"])
+        pl_module.log(f"moco_dist_{phase}/Neg_img_txt_cosine", ret["image_text_neg_sim"])
+        pl_module.log(f"moco_dist_{phase}/Neg-Pos_img_txt_cosine", ret["image_text_neg_sim"] - ret["image_text_pos_sim"])
 
     if pl_module.text_attack:
         pl_module.log(f"moco_dist_{phase}/Pos_txt_txt_L2", ret["text_text_pos_dist"])
@@ -379,10 +366,12 @@ def compute_moco_contrastive(pl_module, batch):
         pl_module.log(f"moco_dist_{phase}/Pos_txt_txt_cosine", ret["text_text_pos_sim"])
         pl_module.log(f"moco_dist_{phase}/Neg_txt_txt_cosine", ret["text_text_neg_sim"])
         pl_module.log(f"moco_dist_{phase}/Neg-Pos_txt_txt_cosine", ret["text_text_neg_sim"] - ret["text_text_pos_sim"])
-
-        # pl_module.log(f"moco_dist_{phase}_txt_img/txt_img_pos_dist", ret["text_image_pos_dist"])
-        # pl_module.log(f"moco_dist_{phase}_txt_img/txt_img_neg_dist", ret["text_image_neg_dist"])
-        # pl_module.log(f"moco_dist_{phase}_txt_img/txt_img_difference", ret["text_image_neg_dist"] - ret["text_image_pos_dist"])
+        pl_module.log(f"moco_dist_{phase}/Pos_txt_img_L2", ret["text_image_pos_dist"])
+        pl_module.log(f"moco_dist_{phase}/Neg_txt_img_L2", ret["text_image_neg_dist"])
+        pl_module.log(f"moco_dist_{phase}/Neg-Pos_txt_img_L2", ret["text_image_neg_dist"] - ret["text_image_pos_dist"])
+        pl_module.log(f"moco_dist_{phase}/Pos_txt_img_cosine", ret["text_image_pos_sim"])
+        pl_module.log(f"moco_dist_{phase}/Neg_txt_img_cosine", ret["text_image_neg_sim"])
+        pl_module.log(f"moco_dist_{phase}/Neg-Pos_txt_img_cosine", ret["text_image_neg_sim"] - ret["text_image_pos_sim"])
 
     return ret
 
@@ -1138,7 +1127,7 @@ def compute_irtr(pl_module, batch):
 
 @torch.no_grad()
 def compute_irtr_recall(pl_module):
-    text_dset = pl_module.trainer.datamodule.dms[0].make_no_false_val_dset()
+    text_dset = pl_module.trainer.datamodule.dms[0].make_no_false_val_dset(max_num=20)
     text_dset.tokenizer = pl_module.trainer.datamodule.dms[0].tokenizer
     text_loader = torch.utils.data.DataLoader(
         text_dset,
@@ -1152,7 +1141,8 @@ def compute_irtr_recall(pl_module):
     )
 
     image_dset = pl_module.trainer.datamodule.dms[0].make_no_false_val_dset(
-        image_only=True
+        image_only=True,
+        max_num=20
     )
     image_dset.tokenizer = pl_module.trainer.datamodule.dms[0].tokenizer
     dist_sampler = DistributedSampler(image_dset, shuffle=False)
@@ -1196,19 +1186,13 @@ def compute_irtr_recall(pl_module):
     rank_scores = list()
     rank_iids = list()
 
-    # last_bs = -1
     for img_batch in tqdm.tqdm(image_preload, desc="rank loop"):
         _ie, _im, _iid = img_batch
         _, l, c = _ie.shape
 
         img_batch_score = list()
         for txt_batch in text_preload:
-        #     if not (_iid in txt_batch["img_index"]):
-        #         continue
             fblen = len(txt_batch["text_ids"])
-        #     if last_bs > fblen:
-        #         break
-        #     last_bs = fblen
             ie = _ie.expand(fblen, l, c)
             im = _im.expand(fblen, l)
 
@@ -1226,10 +1210,7 @@ def compute_irtr_recall(pl_module):
                 )[:, 0]
 
             img_batch_score.append(score)
-            # break
 
-        # if last_bs > fblen:
-        #     break
         img_batch_score = torch.cat(img_batch_score)
         rank_scores.append(img_batch_score.cpu().tolist())
         rank_iids.append(_iid)
@@ -1242,6 +1223,166 @@ def compute_irtr_recall(pl_module):
     iids = iids.view(-1)
     scores = torch.tensor(gather_rank_scores)
     scores = scores.view(len(iids), -1)
+
+    topk10 = scores.topk(10, dim=1)
+    topk5 = scores.topk(5, dim=1)
+    topk1 = scores.topk(1, dim=1)
+    topk10_iids = tiids[topk10.indices]
+    topk5_iids = tiids[topk5.indices]
+    topk1_iids = tiids[topk1.indices]
+
+    tr_r10 = (iids.unsqueeze(1) == topk10_iids).float().max(dim=1)[0].mean()
+    tr_r5 = (iids.unsqueeze(1) == topk5_iids).float().max(dim=1)[0].mean()
+    tr_r1 = (iids.unsqueeze(1) == topk1_iids).float().max(dim=1)[0].mean()
+
+    topk10 = scores.topk(10, dim=0)
+    topk5 = scores.topk(5, dim=0)
+    topk1 = scores.topk(1, dim=0)
+    topk10_iids = iids[topk10.indices]
+    topk5_iids = iids[topk5.indices]
+    topk1_iids = iids[topk1.indices]
+
+    ir_r10 = (tiids.unsqueeze(0) == topk10_iids).float().max(dim=0)[0].mean()
+    ir_r5 = (tiids.unsqueeze(0) == topk5_iids).float().max(dim=0)[0].mean()
+    ir_r1 = (tiids.unsqueeze(0) == topk1_iids).float().max(dim=0)[0].mean()
+
+    return (ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10)
+
+
+@torch.no_grad()
+def compute_attacked_irtr_recall(pl_module):
+    text_dset = pl_module.trainer.datamodule.dms[0].make_no_false_val_dset(max_num=20)
+    text_dset.tokenizer = pl_module.trainer.datamodule.dms[0].tokenizer
+    text_loader = torch.utils.data.DataLoader(
+        text_dset,
+        batch_size=64,
+        num_workers=pl_module.hparams.config["num_workers"],
+        pin_memory=True,
+        collate_fn=functools.partial(
+            text_dset.collate,
+            mlm_collator=pl_module.trainer.datamodule.dms[0].mlm_collator,
+        ),
+    )
+
+    image_dset = pl_module.trainer.datamodule.dms[0].make_no_false_val_dset(
+        image_only=True,
+        max_num=20
+    )
+    image_dset.tokenizer = pl_module.trainer.datamodule.dms[0].tokenizer
+    dist_sampler = DistributedSampler(image_dset, shuffle=False)
+    image_loader = torch.utils.data.DataLoader(
+        image_dset,
+        batch_size=1,
+        num_workers=pl_module.hparams.config["num_workers"],
+        sampler=dist_sampler,
+        pin_memory=True,
+        collate_fn=functools.partial(
+            image_dset.collate,
+            mlm_collator=pl_module.trainer.datamodule.dms[0].mlm_collator,
+        ),
+    )
+
+    text_preload = list()
+    for _b in tqdm.tqdm(text_loader, desc="text prefetch loop"):
+        text_preload.append(
+            {
+                "text_ids": _b["text_ids"].to(pl_module.device),
+                "text_masks": _b["text_masks"].to(pl_module.device),
+                "text_labels": _b["text_labels"].to(pl_module.device),
+                "img_index": _b["img_index"],
+            }
+        )
+
+    tiids = list()
+    for pre in text_preload:
+        tiids += pre["img_index"]
+    tiids = torch.tensor(tiids)
+
+    image_preload = list()
+    for _b in tqdm.tqdm(image_loader, desc="image prefetch loop"):
+        (ie, im, _, _) = pl_module.transformer.visual_embed(
+            _b["image"][0].to(pl_module.device),
+            max_image_len=pl_module.hparams.config["max_image_len"],
+            mask_it=False,
+        )
+        image_preload.append((ie, im, _b["img_index"][0]))
+    
+    text_preload_attacked = list()
+    image_preload_attacked = list()
+    if pl_module.text_attack or pl_module.image_attack:
+        for _b in tqdm.tqdm(text_loader, desc="attacked data prefetch loop"):
+            _b = {
+                "text": _b["text"],
+                "text_ids": _b["text_ids"].to(pl_module.device),
+                "text_masks": _b["text_masks"].to(pl_module.device),
+                "text_labels": _b["text_labels"].to(pl_module.device),
+                "image": [_b["image"][0].to(pl_module.device)],
+                "img_index": _b["img_index"],
+            }
+            if pl_module.text_attack:
+                _b = compute_geometric(pl_module, deepcopy(_b), "irtr")
+                text_preload_attacked.append(
+                    {
+                        "text_ids": _b["text_ids"].to(pl_module.device),
+                        "text_masks": _b["text_masks"].to(pl_module.device),
+                        "text_labels": _b["text_labels"].to(pl_module.device),
+                        "img_index": _b["img_index"],
+                    }
+                )
+            if pl_module.image_attack:
+                _b = compute_pgd(pl_module, deepcopy(_b), "irtr")
+                (ie, im, _, _) = pl_module.transformer.visual_embed(
+                    _b["image"][0],
+                    max_image_len=pl_module.hparams.config["max_image_len"],
+                    mask_it=False,
+                )
+                image_preload_attacked.append((ie, im, _b["img_index"][0]))
+
+    rank_scores = list()
+    rank_iids = list()
+
+    for img_batch in tqdm.tqdm(image_preload, desc="rank loop"):
+        _ie, _im, _iid = img_batch
+        _, l, c = _ie.shape
+
+        img_batch_score = list()
+        for txt_batch in text_preload:
+            fblen = len(txt_batch["text_ids"])
+            ie = _ie.expand(fblen, l, c)
+            im = _im.expand(fblen, l)
+
+            with torch.cuda.amp.autocast():
+                infer = pl_module.infer(
+                    {
+                        "text_ids": txt_batch["text_ids"],
+                        "text_masks": txt_batch["text_masks"],
+                        "text_labels": txt_batch["text_labels"],
+                    },
+                    image_embeds=ie,
+                    image_masks=im,
+                )
+                img_representation, txt_representation = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
+                img_q = nn.functional.normalize(img_representation, dim=1)
+                txt_q = nn.functional.normalize(txt_representation, dim=1)
+                score = torch.einsum('nc,nc->n', [img_q, txt_q])  # .unsqueeze(-1)
+                # print(txt_batch["img_index"], score)
+
+            img_batch_score.append(score)
+
+        img_batch_score = torch.cat(img_batch_score)
+        rank_scores.append(img_batch_score.cpu().tolist())
+        rank_iids.append(_iid)
+
+    torch.distributed.barrier()
+    gather_rank_scores = all_gather(rank_scores)
+    gather_rank_iids = all_gather(rank_iids)
+
+    iids = torch.tensor(gather_rank_iids)
+    iids = iids.view(-1)
+    scores = torch.tensor(gather_rank_scores)
+    scores = scores.view(len(iids), -1)
+    print(scores)
+    print(iids)
 
     topk10 = scores.topk(10, dim=1)
     topk5 = scores.topk(5, dim=1)

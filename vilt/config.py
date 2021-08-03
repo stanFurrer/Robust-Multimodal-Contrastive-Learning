@@ -131,7 +131,7 @@ def task_moco():
     loss_names = _loss_names({"moco": 1})
     # batch_size = 4096
     batch_size = 128
-    max_epoch = 10
+    max_epoch = 1
     max_image_len = 200
     test_only = False
     # Attacks parameters
@@ -336,7 +336,7 @@ def task_finetune_irtr_coco_randaug_attacked():
     max_epoch = 10
     max_steps = None
     warmup_steps = 0.1
-    get_recall_metric = False
+    get_recall_metric = True
     draw_false_text = 15
     learning_rate = 1e-4
     test_only = True
