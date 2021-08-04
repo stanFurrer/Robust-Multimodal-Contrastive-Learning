@@ -1,6 +1,6 @@
 #### New
-from attack.greedy_attack_vilt import GreedyAttack_moco, GreedyAttack_barlowtwins, GreedyAttack_nlvr2
-from attack.pgd_attack_vilt import PGDAttack_moco, PGDAttack_bartlowtwins, PGDAttack_nlvr2
+from attack.greedy_attack_vilt import GreedyAttack_moco, GreedyAttack_barlowtwins, GreedyAttack_nlvr2,GreedyAttack_irtr
+from attack.pgd_attack_vilt import PGDAttack_moco, PGDAttack_bartlowtwins, PGDAttack_nlvr2, PGDAttack_irtr
 from augmentation.image_augmentation import ImageAugmentation
 from augmentation.text_augmentation import TextAugmentation
 import os #
@@ -66,6 +66,7 @@ class ViLTransformerSS(pl.LightningModule):
 
         if config["loss_names"]["moco"] > 0:
             self.tsne_vizualisation = config["TSNE_vizualisation"]
+            self.img_save_path = config["img_save_path"]
             self.cosine = nn.CosineSimilarity(dim=1, eps=1e-6)
             self.multimodal = config["Multimodal"]
             self.per_step_bs = config["num_gpus"] * config["num_nodes"] * config["per_gpu_batchsize"]
@@ -88,10 +89,10 @@ class ViLTransformerSS(pl.LightningModule):
             self.image_view = config["image_view"]
             self.num_negative = config["num_negative"]
             self.register_buffer("text_queue", torch.randn(128, self.num_negative))
-            self.text_queue = nn.functional.normalize(self.text_queue, dim=0)
+            #self.text_queue = nn.functional.normalize(self.text_queue, dim=0)
             self.register_buffer("text_queue_ptr", torch.zeros(1, dtype=torch.long))
             self.register_buffer("image_queue", torch.randn(128, self.num_negative))
-            self.image_queue = nn.functional.normalize(self.image_queue, dim=0)
+            #self.image_queue = nn.functional.normalize(self.image_queue, dim=0)
             self.register_buffer("image_queue_ptr", torch.zeros(1, dtype=torch.long))
             if self.augmentation : 
                 if self.text_view:
@@ -108,6 +109,7 @@ class ViLTransformerSS(pl.LightningModule):
                
         if config["loss_names"]["barlowtwins"] > 0:
             self.tsne_vizualisation = config["TSNE_vizualisation"]
+            self.img_save_path = config["img_save_path"]
             self.cosine = nn.CosineSimilarity(dim=1, eps=1e-6)    
             self.multimodal = config["Multimodal"]
             self.per_step_bs = config["num_gpus"] * config["num_nodes"] * config["per_gpu_batchsize"]
@@ -222,6 +224,17 @@ class ViLTransformerSS(pl.LightningModule):
         vilt_utils.set_metrics(self)
         self.current_tasks = list()
 
+        if self.hparams.config["loss_names"]["irtr_attacked"] > 0:
+            self.moco_head = heads.MOCOHead(config["hidden_size"], config["hidden_size"], 128)
+            self.image_attack = config["image_view"]
+            self.text_attack = config["text_view"]
+            if config["text_view"]:
+                print("----Loading GreedyAttack_cross_entropy ----")
+                self.greedy_attacker = GreedyAttack_irtr(config)
+                print("----Greedy GreedyAttack_cross_entropy DONE ----")
+            if config["image_attack"]:
+                self.pgd_attacker = PGDAttack_irtr(config)        
+        
         # ===================== load downstream (test_only) ======================
 
         if self.hparams.config["load_path"] != "" and self.hparams.config["test_only"]:

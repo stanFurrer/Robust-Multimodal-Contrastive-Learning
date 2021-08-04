@@ -21,6 +21,7 @@ class BaseDataset(torch.utils.data.Dataset):
         draw_false_image=0,
         draw_false_text=0,
         image_only=False,
+        max_num=-1,
     ):
         """
         data_dir : where dataset file *.arrow lives; existence should be guaranteed via DataModule.prepare_data
@@ -29,6 +30,7 @@ class BaseDataset(torch.utils.data.Dataset):
         """
         assert len(transform_keys) >= 1
         super().__init__()
+        
         self.transforms = keys_to_transforms(transform_keys, size=image_size)
         self.text_column_name = text_column_name
         self.names = names
@@ -69,12 +71,16 @@ class BaseDataset(torch.utils.data.Dataset):
 
         if text_column_name != "" and not self.image_only:
             j = 0
-            for i, texts in enumerate(self.all_texts):
+            if max_num == -1:
+                max_num = len(self.all_texts)
+            for i, texts in enumerate(self.all_texts[:max_num]):
                 for _j in range(len(texts)):
                     self.index_mapper[j] = (i, _j)
                     j += 1
         else:
-            for i in range(len(self.table)):
+            if max_num == -1:
+                max_num = len(self.table)
+            for i in range(len(self.table[:max_num])):
                 self.index_mapper[i] = (i, None)
 
     @property
@@ -165,9 +171,11 @@ class BaseDataset(torch.utils.data.Dataset):
 
         img_keys = [k for k in list(dict_batch.keys()) if "image" in k]
         img_sizes = list()
+
         for img_key in img_keys:
             img = dict_batch[img_key]
             img_sizes += [ii.shape for i in img if i is not None for ii in i]
+
         for size in img_sizes:
             assert (
                 len(size) == 3
@@ -180,11 +188,12 @@ class BaseDataset(torch.utils.data.Dataset):
         for img_key in img_keys:
             img = dict_batch[img_key]
             view_size = len(img[0])
+
             new_images = [
                 torch.zeros(batch_size, 3, max_height, max_width)
                 for _ in range(view_size)
             ]
-            
+
             for bi in range(batch_size):
                 orig_batch = img[bi]
                 for vi in range(view_size):
@@ -232,4 +241,5 @@ class BaseDataset(torch.utils.data.Dataset):
                 dict_batch[f"{txt_key}_ids_mlm"] = mlm_ids
                 dict_batch[f"{txt_key}_labels_mlm"] = mlm_labels
                 dict_batch[f"{txt_key}_masks"] = attention_mask
+
         return dict_batch

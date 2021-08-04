@@ -78,7 +78,7 @@ class BarlowTwinsHead(nn.Module):
         )
         self.norm = nn.BatchNorm1d(layer_dim[-1], affine=False)
     
-    def forward(self, y1, y2):
+    def forward(self, y1, y2): # Img, Text
         y1 = y1[:, 0]
         y2 = y2[:, 0]
         z1 = self.img_projector(y1)
@@ -130,7 +130,7 @@ class MOCOHead(nn.Module):
         first_text_tensor  = txt[:, 0]
         img = self.img_model(first_image_tensor)
         txt = self.txt_model(first_text_tensor)
-        return img, txt    
+        return img, txt       
 
 
 class ITMHead(nn.Module):

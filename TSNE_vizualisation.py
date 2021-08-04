@@ -14,7 +14,7 @@ plt.rc('font', **font)
 img_save_path   = "/itet-stor/sfurrer/net_scratch/UNITER/ViLT/attacks_analysis/TSNE"
 
 
-def TSNE_projection(neg_img, neg_txt,nbr_element,batch_idx) : 
+def TSNE_projection(neg_img, neg_txt,nbr_element,batch_idx,img_save_path) : 
 
     #TO DO : Add the possibility to choose The number of element to show 
     

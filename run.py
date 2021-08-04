@@ -15,7 +15,7 @@ def main(_config):
     print("\n------------------------------")
     print("The Multimodal is set to ", _config["Multimodal"])
     if _config["augmentation"] : 
-        #print("Doing the following text augmentation",_config["type_txt_augm"] ) 
+        print("Doing augmentation") 
         print("Text_view set to ", _config["text_view"])
         print("Image_view set to ",_config["image_view"] )
     else : 
@@ -47,7 +47,7 @@ def main(_config):
         mode="max",
         save_last=True,
     )
-    test = True
+    test = False
     if test == True : 
         # For test Purposes : Other
         logger = pl.loggers.TensorBoardLogger(
@@ -56,8 +56,8 @@ def main(_config):
             #name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}',
         )         
     else : 
-        #name    = "Barlow_Twins_fully_cross_modal"
-        #version = "Geom" 
+        #name    = "MoCo_fully_cross_modal"
+        #version = "Augm" 
         # For experimence Purposes 
         logger = pl.loggers.TensorBoardLogger(
             _config["log_dir"],
@@ -66,7 +66,8 @@ def main(_config):
         )          
      
     lr_callback = pl.callbacks.LearningRateMonitor(logging_interval="step")
-    callbacks = [checkpoint_callback, lr_callback]
+    # callbacks = [checkpoint_callback, lr_callback]
+    callbacks = [lr_callback]
 
     num_gpus = (
         _config["num_gpus"]
@@ -77,7 +78,7 @@ def main(_config):
     grad_steps = _config["batch_size"] // (
         _config["per_gpu_batchsize"] * num_gpus * _config["num_nodes"]
     )
-
+    print("This is grad_steps",grad_steps)
     max_steps = _config["max_steps"] if _config["max_steps"] is not None else None
 
     trainer = pl.Trainer(

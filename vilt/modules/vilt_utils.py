@@ -7,7 +7,7 @@ from transformers import (
     get_cosine_schedule_with_warmup,
 )
 from vilt.modules.dist_utils import all_gather
-from vilt.modules.objectives import compute_irtr_recall
+from vilt.modules.objectives import compute_irtr_recall , compute_attacked_irtr_recall
 from vilt.gadgets.my_metrics import Accuracy, VQAScore, Scalar,change_rate
 
 def set_metrics(pl_module):
@@ -37,12 +37,7 @@ def set_metrics(pl_module):
                     if pl_module.text_view:
                         setattr(pl_module, f"train_{k}_num_changes", Scalar())
                         setattr(pl_module, f"train_{k}_change_rate", Scalar())  
-                else:
-                    #setattr(pl_module, f"dev_{k}_accuracy", Accuracy())
-                    #setattr(pl_module, f"dev_{k}_loss", Scalar())
-                    #setattr(pl_module, f"test_{k}_accuracy", Accuracy())
-                    #setattr(pl_module, f"test_{k}_loss", Scalar()) 
-                    
+                else:  
                     setattr(pl_module, f"dev_nlvr2_original_accuracy", Accuracy())
                     setattr(pl_module, f"dev_nlvr2_original_loss", Scalar())
                     setattr(pl_module, f"dev_nlvr2_attacked_accuracy", Accuracy())
@@ -51,17 +46,11 @@ def set_metrics(pl_module):
                     setattr(pl_module, f"test_nlvr2_original_loss", Scalar())
                     setattr(pl_module, f"test_nlvr2_attacked_accuracy", Accuracy())
                     setattr(pl_module, f"test_nlvr2_attacked_loss", Scalar())                    
-                    
-                    #setattr(pl_module, f"test_{k}_change_rate_cross", change_rate())
-                    
-                    
-                    #####
                     #if pl_module.image_view:
                     #    setattr(pl_module, f"test_{k}_delta", Scalar())
                     #if pl_module.text_view:
                     #    setattr(pl_module, f"test_{k}_num_changes", Scalar())
                     #    setattr(pl_module, f"test_{k}_change_rate", Scalar())                    
-                    ####
                     
             elif k == "irtr":
                 setattr(pl_module, f"{split}_irtr_loss", Scalar())
@@ -94,8 +83,12 @@ def epoch_wrapup(pl_module):
     the_metric = 0
 
     if pl_module.hparams.config["get_recall_metric"] and not pl_module.training:
-        (ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10) = compute_irtr_recall(pl_module)
+        if pl_module.hparams.config["loss_names"]["irtr_attacked"] > 0:
+            (ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10) = compute_attacked_irtr_recall(pl_module)
+        else:
+            (ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10) = compute_irtr_recall(pl_module)
         print((ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10), pl_module.global_step)
+        """
         pl_module.logger.experiment.add_scalar(
             "recalls/ir_r1", ir_r1, pl_module.global_step
         )
@@ -114,6 +107,7 @@ def epoch_wrapup(pl_module):
         pl_module.logger.experiment.add_scalar(
             "recalls/tr_r10", tr_r10, pl_module.global_step
         )
+        """
         the_metric += ir_r1.item() + tr_r1.item()
 
     for loss_name, v in pl_module.hparams.config["loss_names"].items():
@@ -360,7 +354,7 @@ def set_schedule(pl_module):
         "norm2.bias",
         "norm2.weight",
     ]
-    head_names = ["vqa_classifier", "nlvr2_classifier", "moco_head"]
+    head_names = ["vqa_classifier", "nlvr2_classifier", "moco_head", "barlowtwinshead"] # barlowtwinshead
     lr_mult = pl_module.hparams.config["lr_mult"]
     end_lr = pl_module.hparams.config["end_lr"]
     decay_power = pl_module.hparams.config["decay_power"]

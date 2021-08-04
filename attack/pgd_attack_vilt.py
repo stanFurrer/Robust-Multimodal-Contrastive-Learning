@@ -221,6 +221,7 @@ class PGDAttack_bartlowtwins(PGDAttack):
                 off_diag = off_diagonal(c).pow_(2).sum()
 
                 loss = (on_diag + pl_module.adv_lr * off_diag) / self.adv_steps_img  # * pl_module.loss_weight
+                # print("loss", loss)
                 # calculate x.grad
                 loss.backward()
             # Get gradient
@@ -323,4 +324,76 @@ class PGDAttack_nlvr2(PGDAttack):
                 if self.adv_max_norm_img > 0:
                     img_delta_1 = torch.clamp(img_delta_1, -self.adv_max_norm_img, self.adv_max_norm_img).detach()
         
-        return img_delta_0, img_delta_1        
+        return img_delta_0, img_delta_1     
+    
+
+class PGDAttack_irtr(PGDAttack):
+    def __init__(self, config):
+        super().__init__(config, "moco")
+        # a mini ViLTransformerSS
+        self.moco_head = None
+    
+    def build_mini_vilt(self, pl_module):
+        self.pl_module = pl_module
+        self.text_embeddings = deepcopy(pl_module.text_embeddings)
+        self.token_type_embeddings = deepcopy(pl_module.token_type_embeddings)
+        self.transformer = deepcopy(pl_module.transformer)
+        self.moco_head = deepcopy(pl_module.moco_head)
+    
+    def vilt_zero_grad(self):
+        self.text_embeddings.zero_grad()
+        self.transformer.zero_grad()
+        self.token_type_embeddings.zero_grad()
+        self.moco_head.zero_grad()
+    
+    def pgd_attack(self, pl_module, batch, k_modality):
+        self.build_mini_vilt(pl_module)
+        loss_fct = nn.CrossEntropyLoss()
+        # Get the original img
+        img_init = batch['image'][0]
+        # Initialize the delta as zero vectors
+        img_delta = torch.zeros_like(img_init)
+        self.vilt_zero_grad()
+        for astep in range(self.adv_steps_img):
+            # Need to get the gradient for each batch of image features
+            img_delta.requires_grad_(True)
+            with torch.enable_grad():
+                try:
+                    batch['image'][0] = (img_init + img_delta)  # .to(pl_module.device)
+                    infer = self.infer(batch, mask_text=False, mask_image=False)
+                    image_representation, text_representation = self.moco_head(infer['image_feats'], infer['text_feats'])
+                    image_representation = nn.functional.normalize(image_representation, dim=1)
+                    text_representation = nn.functional.normalize(text_representation, dim=1)
+                except:
+                    print("problem in step ", astep)
+                    sys.exit("STOPP")
+                    
+                batch_scores = []
+                batch_labels = []
+                for q_idx, q_image in enumerate(image_representation):
+                    scores = torch.einsum('nc,ck->nk', [q_image.unsqueeze(0), text_representation.T])
+                    batch_scores.append(scores)
+                    batch_labels.append(q_idx)
+
+                logits = torch.cat(batch_scores).view(len(batch_labels), -1)
+                labels = torch.tensor(batch_labels).type_as(logits)
+                loss = loss_fct(logits.float(), labels.long()) / (1.0 * self.adv_steps_img)
+                # print(loss)
+                # calculate x.grad
+                loss.backward()
+            # Get gradient
+            img_delta_grad = img_delta.grad.clone().detach().float()
+            # Get inf_norm gradient (It will be used to normalize the img_delta_grad)
+            denorm = torch.norm(img_delta_grad.view(img_delta_grad.size(0), -1), dim=1, p=float("inf")).view(-1, 1, 1,
+                                                                                                             1)
+            # Clip gradient to Lower Bound
+            denorm = torch.clamp(denorm, min=1e-8)
+            # calculate delta_step  with format img_delta
+            img_delta_step = (self.adv_lr_img * img_delta_grad / denorm).to(img_delta)
+            # Add the calculated step to img_delta (The perturbation)
+            img_delta = (img_delta + img_delta_step).detach()
+            # clip the delta if needed
+            if self.adv_max_norm_img > 0:
+                img_delta = torch.clamp(img_delta, -self.adv_max_norm_img, self.adv_max_norm_img).detach()
+        
+        return img_delta       
