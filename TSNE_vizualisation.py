@@ -11,15 +11,14 @@ font = {'family' : 'DejaVu Sans',
         'size'   : 19}
 
 plt.rc('font', **font)
-img_save_path   = "/itet-stor/sfurrer/net_scratch/UNITER/ViLT/attacks_analysis/TSNE"
 
 
-def TSNE_projection(neg_img, neg_txt,nbr_element,batch_idx,img_save_path) : 
+def TSNE_projection(neg_k,nbr_element,batch_idx,img_save_path) : 
 
     #TO DO : Add the possibility to choose The number of element to show 
     
-    neg_img = neg_img[:, :nbr_element]
-    neg_txt = neg_txt[:, :nbr_element]
+    neg_img = neg_k[:, :nbr_element]
+
     pairs   = np.concatenate((np.arange(nbr_element),np.arange(nbr_element))) 
     
     embeddings_array = torch.cat((neg_img,neg_txt),1)
@@ -38,7 +37,7 @@ def TSNE_projection(neg_img, neg_txt,nbr_element,batch_idx,img_save_path) :
                    #label = objects[lab] ,
                    alpha=0.5)    
 
-    plt.title('TSNE : Embedded representation Text/Images', fontsize=20)  
+    plt.title('TSNE : Joint Representation Text/Images', fontsize=20)  
     
     plt.savefig(os.path.join(img_save_path,"TSNE_{}.png".format(batch_idx)), 
         #This is simple recomendation for publication plots

@@ -47,17 +47,17 @@ def main(_config):
         mode="max",
         save_last=True,
     )
-    test = False
+    test = True
     if test == True : 
         # For test Purposes : Other
         logger = pl.loggers.TensorBoardLogger(
             _config["log_dir"],
-            name= "Other"
+            name= "Other_new"
             #name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}',
         )         
     else : 
-        #name    = "MoCo_fully_cross_modal"
-        #version = "Augm" 
+        name    = "Finetuning_New_Moco" # BarlowTwins_New
+        version = "NLVR2_aug" 
         # For experimence Purposes 
         logger = pl.loggers.TensorBoardLogger(
             _config["log_dir"],

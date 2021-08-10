@@ -132,16 +132,16 @@ def task_moco():
     num_negative = 65536
     momentum = 0.999
     temperature = 0.07
-    augmentation = True #-------------------------
+    augmentation = False #-------------------------
     num_beams = 20
     num_return_sequences = 20
-    text_view = True
-    image_view = True
+    text_view = False #-------------------------
+    image_view = False #-------------------------
     type_txt_augm = ["PEGASUS","EDA"] # EDA, PEGASUS    
     loss_names = _loss_names({"moco": 1})
     # batch_size = 4096
     batch_size = 128
-    max_epoch = 1
+    max_epoch = 3
     max_image_len = 200
     test_only = False
     # Attacks parameters
@@ -169,20 +169,20 @@ def task_barlowtwins():
     augmentation = False #-------------------------
     num_beams = 20
     num_return_sequences = 20
-    text_view = True #-------------------------
+    text_view = False #-------------------------
     image_view = False #-------------------------
     type_txt_augm = ["PEGASUS","EDA"] # EDA, PEGASUS      
     loss_names = _loss_names({"barlowtwins": 1})
     adv_lr = 0.0051
-    batch_size = 248 #--------------------
-    max_epoch = 10
+    batch_size = 128 #--------------------
+    max_epoch = 3
     max_image_len = 200
     test_only = False
     # Attacks parameters
     # PGD
     adv_steps_img = 5
     adv_lr_img = 0.7
-    adv_max_norm_img = 0.2
+    adv_max_norm_img = 0.0
     # Geometric
     n_candidates = 10
     max_loops = 10
@@ -258,7 +258,7 @@ def task_finetune_nlvr2_randaug_attacked():
     datasets = ["nlvr2"]
     train_transform_keys = ["pixelbert_randaug"]
     loss_names = _loss_names({"nlvr2_attacked": 1})
-    batch_size = 16
+    batch_size = 128
     max_epoch = 10
     max_steps = None
     warmup_steps = 0.1
@@ -356,8 +356,8 @@ def task_finetune_irtr_coco_randaug_attacked():
     learning_rate = 1e-4
     test_only = True
     # Attacks parameters
-    text_attack = False
-    image_attack = False
+    text_view = False
+    image_view = False
     # PGD
     adv_steps_img = 5
     adv_lr_img = 0.7

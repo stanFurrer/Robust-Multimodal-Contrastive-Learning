@@ -88,12 +88,19 @@ class ViLTransformerSS(pl.LightningModule):
             self.augmentation= config["augmentation"]
             self.image_view = config["image_view"]
             self.num_negative = config["num_negative"]
+            
+            """ OLD
             self.register_buffer("text_queue", torch.randn(128, self.num_negative))
             #self.text_queue = nn.functional.normalize(self.text_queue, dim=0)
             self.register_buffer("text_queue_ptr", torch.zeros(1, dtype=torch.long))
             self.register_buffer("image_queue", torch.randn(128, self.num_negative))
             #self.image_queue = nn.functional.normalize(self.image_queue, dim=0)
             self.register_buffer("image_queue_ptr", torch.zeros(1, dtype=torch.long))
+            """
+            self.register_buffer("proj_queue", torch.randn(128, self.num_negative))
+            self.register_buffer("proj_queue_ptr", torch.zeros(1, dtype=torch.long))
+            #self.proj_queue = nn.functional.normalize(self.proj_queue, dim=0)
+            
             if self.augmentation : 
                 if self.text_view:
                     self.text_augmentation = TextAugmentation(config)
@@ -221,20 +228,19 @@ class ViLTransformerSS(pl.LightningModule):
             for p in self.itm_score.parameters():
                 p.requires_grad = False
 
-        vilt_utils.set_metrics(self)
-        self.current_tasks = list()
-
         if self.hparams.config["loss_names"]["irtr_attacked"] > 0:
             self.moco_head = heads.MOCOHead(config["hidden_size"], config["hidden_size"], 128)
-            self.image_attack = config["image_view"]
-            self.text_attack = config["text_view"]
+            self.image_view = config["image_view"]
+            self.text_view = config["text_view"]
             if config["text_view"]:
                 print("----Loading GreedyAttack_cross_entropy ----")
                 self.greedy_attacker = GreedyAttack_irtr(config)
                 print("----Greedy GreedyAttack_cross_entropy DONE ----")
-            if config["image_attack"]:
+            if config["image_view"]:
                 self.pgd_attacker = PGDAttack_irtr(config)        
-        
+       
+        vilt_utils.set_metrics(self)
+        self.current_tasks = list()        
         # ===================== load downstream (test_only) ======================
 
         if self.hparams.config["load_path"] != "" and self.hparams.config["test_only"]:
@@ -386,16 +392,16 @@ class ViLTransformerSS(pl.LightningModule):
             x[:, : text_embeds.shape[1]],
             x[:, text_embeds.shape[1] :],
         )
-        # cls_feats = self.pooler(x)
+        cls_feats = self.pooler(x)
 
         ret = {
             "text_feats": text_feats,
             "image_feats": image_feats,
-            # "cls_feats": cls_feats,
-            # "raw_cls_feats": x[:, 0],
-            # "image_labels": image_labels,
+            "cls_feats": cls_feats,
+            "raw_cls_feats": x[:, 0],
+            #"image_labels": image_labels,
             "image_masks": image_masks,
-            # "text_labels": text_labels,
+            #"text_labels": text_labels,
             "text_ids": text_ids,
             "text_masks": text_masks,
             "patch_index": patch_index,
@@ -436,7 +442,11 @@ class ViLTransformerSS(pl.LightningModule):
         # Image Retrieval and Text Retrieval
         if "irtr" in self.current_tasks:
             ret.update(objectives.compute_irtr(self, batch))
-
+        
+        # Image Retrieval and Text Retrieval
+        if "irtr_attacked" in self.current_tasks:
+            ret.update(objectives.compute_irtr_attacked(self, batch))
+            
         # MoCo Contrasive framework
         if "moco" in self.current_tasks:
             ret.update(objectives.compute_moco_contrastive(self, batch,batch_idx))
@@ -466,7 +476,7 @@ class ViLTransformerSS(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         # For adversarial
-        torch.set_grad_enabled(True)
+        #torch.set_grad_enabled(True)
         vilt_utils.set_task(self)
         output = self(batch,batch_idx)
         ret = dict()

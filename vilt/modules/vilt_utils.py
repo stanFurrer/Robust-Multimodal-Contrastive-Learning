@@ -54,6 +54,11 @@ def set_metrics(pl_module):
                     
             elif k == "irtr":
                 setattr(pl_module, f"{split}_irtr_loss", Scalar())
+            elif k == "irtr_attacked":
+                setattr(pl_module, f"{split}_irtr_original_loss", Scalar())
+                setattr(pl_module, f"{split}_irtr_attacked_loss", Scalar())
+                setattr(pl_module, f"{split}_irtr_original_accuracy", Accuracy())
+                setattr(pl_module, f"{split}_irtr_attacked_accuracy", Accuracy())            
             elif k == "mppd" or k == "mpfr":
                 setattr(pl_module, f"{split}_{k}_loss", Scalar())
             elif k == "itm":
@@ -256,6 +261,28 @@ def epoch_wrapup(pl_module):
                 getattr(pl_module, f"{phase}_irtr_loss").compute(),
             )
             getattr(pl_module, f"{phase}_irtr_loss").reset()
+        elif loss_name == "irtr_attacked":
+            pl_module.log(
+                f"{loss_name}/{phase}/irtr_original_loss_epoch",
+                getattr(pl_module, f"{phase}_irtr_original_loss").compute(),
+            )
+            getattr(pl_module, f"{phase}_irtr_original_loss").reset()
+            
+            value = getattr(pl_module, f"{phase}_irtr_original_accuracy").compute()
+            pl_module.log(f"irtr_attacked/{phase}/original_accuracy_epoch", value)
+            getattr(pl_module, f"{phase}_irtr_original_accuracy").reset()
+            
+            if pl_module.text_attack or pl_module.image_attack:
+                pl_module.log(
+                    f"{loss_name}/{phase}/irtr_attacked_loss_epoch",
+                    getattr(pl_module, f"{phase}_irtr_attacked_loss").compute(),
+                )
+                getattr(pl_module, f"{phase}_irtr_attacked_loss").reset()
+            
+                value = getattr(pl_module, f"{phase}_irtr_attacked_accuracy").compute()
+                pl_module.log(f"irtr_attacked/{phase}/attacked_accuracy_epoch", value)
+                getattr(pl_module, f"{phase}_irtr_attacked_accuracy").reset()        
+        
         elif loss_name == "mppd" or loss_name == "mpfr":
             pl_module.log(
                 f"{loss_name}/{phase}/loss_epoch",

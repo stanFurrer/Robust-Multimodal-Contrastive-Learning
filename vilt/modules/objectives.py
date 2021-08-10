@@ -170,12 +170,21 @@ def compute_moco_contrastive(pl_module, batch,batch_idx):
         output = torch.cat(tensors_gather, dim=0)
         return output
 
-    def _dequeue_and_enqueue(keys, queue_type):
+    #def _dequeue_and_enqueue(keys, queue_type):
+    def _dequeue_and_enqueue(keys):
         """ dequeue and euqueue the new batch of text AND image representation"""
         keys = _concat_all_gather(keys)
         batch_size = keys.shape[0]
         if not (pl_module.per_step_bs == batch_size):
             return
+        
+        ptr = int(pl_module.proj_queue_ptr)
+        # assert pl_module.num_negative % batch_size == 0
+        pl_module.proj_queue[:, ptr:ptr+batch_size] = keys.T
+        ptr = (ptr + batch_size) % pl_module.num_negative
+        pl_module.proj_queue_ptr[0] = ptr        
+        
+        """ OLD
         if queue_type == 'text':
             ptr = int(pl_module.text_queue_ptr)
             # assert pl_module.num_negative % batch_size == 0
@@ -188,12 +197,14 @@ def compute_moco_contrastive(pl_module, batch,batch_idx):
             pl_module.image_queue[:, ptr:ptr + batch_size] = keys.T
             ptr = (ptr + batch_size) % pl_module.num_negative
             pl_module.image_queue_ptr[0] = ptr
+        """
 
     loss = 0
     loss_num = 0
     loss_fct = nn.CrossEntropyLoss()
     ret = {}
-
+    phase = "train" if pl_module.training else "val"
+    
     # momentum update key encoder
     _momentum_update_key_layer(pl_module.momentum, pl_module.text_embeddings, pl_module.k_text_embeddings)
     _momentum_update_key_layer(pl_module.momentum, pl_module.token_type_embeddings, pl_module.k_token_type_embeddings)
@@ -202,26 +213,74 @@ def compute_moco_contrastive(pl_module, batch,batch_idx):
 
     with torch.no_grad():
         infer_k = pl_module.infer_k(batch, mask_text=False, mask_image=False)
+        projection_cls_feats_k = pl_module.k_moco_head(infer_k["cls_feats"])
+        k = nn.functional.normalize(projection_cls_feats_k, dim=1)
+        """ OLD
         image_representation_k, text_representation_k = pl_module.k_moco_head(infer_k['image_feats'], infer_k['text_feats'])
         k_text = nn.functional.normalize(text_representation_k, dim=1)
         k_image = nn.functional.normalize(image_representation_k, dim=1)
-
+        """
     infer = pl_module.infer(batch, mask_text=False, mask_image=False)
+    projection_cls_feats = pl_module.moco_head(infer["cls_feats"])
+    q_original = nn.functional.normalize(projection_cls_feats, dim=1)
+    neg_k = pl_module.proj_queue.clone().detach()
+    """ OLD
     image_representation, text_representation = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
     original_text = nn.functional.normalize(text_representation, dim=1)
     original_image = nn.functional.normalize(image_representation, dim=1)
     neg_img = pl_module.image_queue.clone().detach()
     neg_txt = pl_module.text_queue.clone().detach()        
-        
+    """
+    
+    l_pos = torch.einsum('nc,nc->n', [q_original, k]).unsqueeze(-1)
+    l_neg = torch.einsum('nc,ck->nk', [q_original, neg_k])
+    logits = torch.cat([l_pos, l_neg], dim=1)
+    logits /= pl_module.temperature
+    prediction_original = logits.argmax(-1)
+    
     if pl_module.image_view:
         if pl_module.augmentation :            
             augmented_batch = image_augmentation(pl_module, deepcopy(batch))
         else : 
+            augmented_batch = compute_pgd(pl_module, deepcopy(batch), "moco", k_modality=k)
+            """ OLD
             augmented_batch = compute_pgd(pl_module, deepcopy(batch), "moco", k_modality=k_text)
+            """
         infer = pl_module.infer(augmented_batch, mask_text=False, mask_image=False)
+        projection_cls_feats = pl_module.moco_head(infer["cls_feats"])
+        q_img_attack = nn.functional.normalize(projection_cls_feats, dim=1)
+        
+        l_pos = torch.einsum('nc,nc->n', [q_img_attack, k]).unsqueeze(-1)
+        l_neg = torch.einsum('nc,ck->nk', [q_img_attack, neg_k])
+        logits = torch.cat([l_pos, l_neg], dim=1)
+        logits /= pl_module.temperature
+    
+        labels = torch.zeros(logits.shape[0], dtype=torch.long)
+        labels = labels.type_as(logits)        
+        if phase == "train":
+            pl_module.log(f"moco_attack/PGD_success_rate", (~(logits.argmax(-1) == prediction_original)).sum()/logits.shape[0])
+        ret["pos_dist_attacked_img"] = torch.linalg.norm(q_img_attack-k, dim=1).mean() #------
+        ret["pos_cosine_attacked_img"] = pl_module.cosine(q_img_attack,k).mean()       #------ 
+        ret["pos_dot_attacked_img"] = torch.sum(q_img_attack * k, dim=1).mean()        #------
+        dist = 0
+        cosine = 0
+        dot = 0
+        for sub_q in q_img_attack:
+            dist += torch.linalg.norm(sub_q-neg_k.T, dim=1).mean()
+            cosine += pl_module.cosine(torch.unsqueeze(sub_q,0),neg_k.T).mean()
+            dot +=  torch.sum(torch.unsqueeze(sub_q,0) * neg_k.T, dim=1).mean()
+        ret["neg_dist_attacked_img"] = dist / q_img_attack.shape[0] #------ 
+        ret["neg_cosine_attacked_img"] = cosine / q_img_attack.shape[0] #------ 
+        ret["neg_dot_attacked_img"] = dot / q_img_attack.shape[0] #------  
+        
+        loss_attacked_img = loss_fct(logits.float(), labels.long())
+        pl_module.log(f"moco_loss/attacked_img_loss", loss_attacked_img)
+        loss = loss + loss_attacked_img
+        loss_num += 1        
+        """ OLD
         image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
         q = nn.functional.normalize(image_representation_q, dim=1)
-
+        
         # attacked image: close to the same image before attack; away from different images.
         l_pos = torch.einsum('nc,nc->n', [q, k_image]).unsqueeze(-1)
         l_neg = torch.einsum('nc,ck->nk', [q, neg_img])
@@ -244,8 +303,7 @@ def compute_moco_contrastive(pl_module, batch,batch_idx):
         loss_image_image = loss_fct(logits.float(), labels.long())
         pl_module.log(f"moco_loss/img_img_loss", loss_image_image)
         loss = loss + loss_image_image
-        loss_num += 1
-        
+        loss_num += 1       
         # attacked image: close to the corresponding text; away from other text
         l_pos = torch.einsum('nc,nc->n', [q, k_text]).unsqueeze(-1)
         l_neg = torch.einsum('nc,ck->nk', [q, neg_txt])
@@ -271,18 +329,52 @@ def compute_moco_contrastive(pl_module, batch,batch_idx):
         pl_module.log(f"moco_loss/img_txt_loss", loss_image_text)
         loss = loss + loss_image_text
         loss_num += 1             
-        
+        """         
     if pl_module.text_view:
         if pl_module.augmentation : 
             augmented_batch = text_augmentation(pl_module, deepcopy(batch))
         else :   
+            augmented_batch = compute_geometric(pl_module, deepcopy(batch), "moco", k_modality = k)
+            """ OLD
             augmented_batch = compute_geometric(pl_module, deepcopy(batch), "moco", k_modality = k_image)
-        infer = pl_module.infer(augmented_batch, mask_text=False, mask_image=False)
+            """
+        infer = pl_module.infer(augmented_batch, mask_text=False, mask_image=False)       
+        projection_cls_feats = pl_module.moco_head(infer["cls_feats"])
+        q_txt_attack = nn.functional.normalize(projection_cls_feats, dim=1)
+        
+        l_pos = torch.einsum('nc,nc->n', [q_txt_attack, k]).unsqueeze(-1)
+        l_neg = torch.einsum('nc,ck->nk', [q_txt_attack, neg_k])
+        logits = torch.cat([l_pos, l_neg], dim=1)
+        logits /= pl_module.temperature
+    
+        labels = torch.zeros(logits.shape[0], dtype=torch.long)
+        labels = labels.type_as(logits)
+        if phase == "train":
+             pl_module.log(f"moco_attack/Geom_success_rate", (~(logits.argmax(-1) == prediction_original)).sum() / logits.shape[0])        
+        ret["pos_dist_attacked_txt"] = torch.linalg.norm(q_txt_attack - k, dim=1).mean() #------ 
+        ret["pos_cosine_attacked_txt"] = pl_module.cosine(q_txt_attack,k).mean() #------ 
+        ret["pos_dot_attacked_txt"] = torch.sum(q_txt_attack * k, dim=1).mean() #------ 
+        dist = 0
+        cosine = 0
+        dot = 0
+        for sub_q in q_txt_attack:
+            dist += torch.linalg.norm(sub_q - neg_k.T, dim=1).mean()
+            cosine += pl_module.cosine(torch.unsqueeze(sub_q,0),neg_k.T).mean()
+            dot += torch.sum(torch.unsqueeze(sub_q,0) * neg_k.T, dim=1).mean()
+        ret["neg_dist_attacked_txt"] = dist / q_txt_attack.shape[0] #------ 
+        ret["neg_cosine_attacked_txt"] = cosine / q_txt_attack.shape[0] #------ 
+        ret["neg_dot_attacked_txt"] = dot / q_txt_attack.shape[0] #------ 
+        # ret["text_text_logits"] = logits
+        # ret["text_text_labels"] = labels
+        loss_attacked_text = loss_fct(logits.float(), labels.long())
+        pl_module.log(f"moco_loss/attacked_txt_loss", loss_attacked_text)
+        loss = loss + loss_attacked_text
+        loss_num += 1        
+        """ OLD
         image_representation_q, text_representation_q = pl_module.moco_head(infer['image_feats'], infer['text_feats'])
         q = nn.functional.normalize(text_representation_q, dim=1)
         
         # attacked text: close to the same text; away from different text
-        neg_txt = pl_module.text_queue.clone().detach()
         l_pos = torch.einsum('nc,nc->n', [q, k_text]).unsqueeze(-1)
         l_neg = torch.einsum('nc,ck->nk', [q, neg_txt])
         logits = torch.cat([l_pos, l_neg], dim=1)
@@ -336,23 +428,57 @@ def compute_moco_contrastive(pl_module, batch,batch_idx):
         pl_module.log(f"moco_loss/txt_img__loss", loss_text_image)
         loss = loss + loss_text_image
         loss_num += 1
-        
+        """
     if pl_module.training:
+        _dequeue_and_enqueue(k)
+        """ OLD
         _dequeue_and_enqueue(k_text, 'text')
         _dequeue_and_enqueue(k_image, 'image')
-
+        """
+    
+    #OLD
     if (batch_idx) % 1000 == 0 and pl_module.tsne_vizualisation: 
         batch_idx +=1
         print("--Computing TSNE--")
         nbr_element = 1000 * len(batch["text"])
-        TSNE_projection(neg_img,neg_txt,nbr_element,batch_idx,pl_module.img_save_path)
+        TSNE_projection(neg_k,nbr_element,batch_idx,pl_module.img_save_path)
+    
     
     ret["moco_loss"] = loss / loss_num
     
-    phase = "train" if pl_module.training else "val"
     loss = getattr(pl_module, f"{phase}_moco_loss")(ret["moco_loss"])
     pl_module.log(f"moco_loss/step/{phase}", loss)
     
+    if pl_module.image_view:  
+        # L2 distance
+        pl_module.log(f"moco_dist_{phase}_L2/Pos_attacked_img",ret["pos_dist_attacked_img"]) 
+        pl_module.log(f"moco_dist_{phase}_L2/Neg_attacked_img",ret["neg_dist_attacked_img"]) 
+        pl_module.log(f"moco_dist_{phase}_L2/Neg-Pos_attacked_img",ret["neg_dist_attacked_img"]-ret["pos_dist_attacked_img"])         
+        # Cosine distance        
+        pl_module.log(f"moco_dist_{phase}_Cosine/Pos_attacked_img",ret["pos_cosine_attacked_img"]) 
+        pl_module.log(f"moco_dist_{phase}_Cosine/Neg_attacked_img",ret["neg_cosine_attacked_img"])         
+        pl_module.log(f"moco_dist_{phase}_Cosine/Neg-Pos_attacked_img",ret["neg_cosine_attacked_img"]-ret["pos_cosine_attacked_img"])   
+        
+        # dot distance
+        pl_module.log(f"moco_dist_{phase}_Dot/Pos_attacked_img",ret["pos_dot_attacked_img"]) 
+        pl_module.log(f"moco_dist_{phase}_Dot/Neg_attacked_img",ret["neg_dot_attacked_img"])         
+        pl_module.log(f"moco_dist_{phase}_Dot/Neg-Pos_attacked_img",ret["neg_dot_attacked_img"]-ret["pos_dot_attacked_img"]) 
+        
+    if pl_module.text_view:
+        # L2 distance
+        pl_module.log(f"moco_dist_{phase}_L2/Pos_attacked_txt",ret["pos_dist_attacked_txt"]) 
+        pl_module.log(f"moco_dist_{phase}_L2/Neg_attacked_txt",ret["neg_dist_attacked_txt"]) 
+        pl_module.log(f"moco_dist_{phase}_L2/Neg-Pos_attacked_txt",ret["neg_dist_attacked_txt"]-ret["pos_dist_attacked_txt"])         
+        # Cosine distance        
+        pl_module.log(f"moco_dist_{phase}_Cosine/Pos_attacked_txt",ret["pos_cosine_attacked_txt"]) 
+        pl_module.log(f"moco_dist_{phase}_Cosine/Neg_attacked_txt",ret["neg_cosine_attacked_txt"])         
+        pl_module.log(f"moco_dist_{phase}_Cosine/Neg-Pos_attacked_txt",ret["neg_cosine_attacked_txt"]-ret["pos_cosine_attacked_txt"]) 
+        
+        # dot distance        
+        pl_module.log(f"moco_dist_{phase}_Dot/Pos_attacked_txt",ret["pos_dot_attacked_txt"]) 
+        pl_module.log(f"moco_dist_{phase}_Dot/Neg_attacked_txt",ret["neg_dot_attacked_txt"])         
+        pl_module.log(f"moco_dist_{phase}_Dot/Neg-Pos_attacked_txt",ret["neg_dot_attacked_txt"]-ret["pos_dot_attacked_txt"])         
+    """ OLD
     pl_module.log(f"moco_dist_{phase}/Original/cosine/img_txt", pl_module.cosine(original_image,original_text).mean())
     
     if pl_module.image_view:          
@@ -390,7 +516,7 @@ def compute_moco_contrastive(pl_module, batch,batch_idx):
         pl_module.log(f"moco_dist_{phase}_txt_img/cosine/Pos_txt_img", ret["text_image_pos_cosine"])
         pl_module.log(f"moco_dist_{phase}_txt_img/cosine/Neg_txt_img", ret["text_image_neg_cosine"])
         pl_module.log(f"moco_dist_{phase}_txt_img/cosine/Neg-Pos_txt_img", ret["text_image_neg_cosine"] - ret["text_image_pos_cosine"])
-        
+    """    
     return ret
 
 def compute_barlowtwins_contrastive(pl_module, batch,batch_idx):
@@ -406,22 +532,34 @@ def compute_barlowtwins_contrastive(pl_module, batch,batch_idx):
 
     with torch.no_grad():
         infer = pl_module.infer(batch, mask_text=False, mask_image=False)
+        
+        k = pl_module.barlowtwins_head(infer['cls_feats'])
+        """ OLD
         original_image, original_text = pl_module.barlowtwins_head(infer['image_feats'], infer['text_feats'])
-    
+        """
+        
     if pl_module.image_view:
         if pl_module.augmentation : 
             augmented_batch = image_augmentation(pl_module, deepcopy(batch))
         else : 
             if pl_module.multimodal :
+                augmented_batch = compute_pgd(pl_module, deepcopy(batch), "barlowtwins",k_modality=k)
+                """OLD
                 augmented_batch = compute_pgd(pl_module, deepcopy(batch), "barlowtwins",k_modality=original_text)
-            else : 
+                """
+            else : # Doesn't exist anymore
                 augmented_batch = compute_pgd(pl_module, deepcopy(batch), "barlowtwins",k_modality=original_image)
         infer = pl_module.infer(augmented_batch, mask_text=False, mask_image=False)
+        q_image = pl_module.barlowtwins_head(infer['cls_feats'])
+        """ OLD
         image_representation, text_representation = pl_module.barlowtwins_head(infer['image_feats'], infer['text_feats'])
-        
+        """
         if pl_module.multimodal : 
             # Image, Text
+            c_1 = q_image.T @ k
+            """ OLD
             c_1 = image_representation.T @ original_text
+            """
         else : 
             # Image, Image
             c_1 = image_representation.T @ original_image
@@ -433,13 +571,29 @@ def compute_barlowtwins_contrastive(pl_module, batch,batch_idx):
          
         loss = loss + on_diag + pl_module.adv_lr * off_diag
         loss_num += 1
-        ret["barlowtwins_loss_invariance_img"] = on_diag
-        ret["barlowtwins_loss_redundancy_img"] = pl_module.adv_lr * off_diag
+        ret["barlowtwins_loss_invariance_img"] = on_diag 
+        ret["barlowtwins_loss_redundancy_img"] = pl_module.adv_lr * off_diag  
         
         dist_image_neg_dist = 0
         dist_text_neg_dist  = 0
         dist_image_neg_cosine = 0
-        dist_text_neg_cosine  = 0        
+        dist_text_neg_cosine  = 0 
+         
+        #for sub_img in q_image:
+        #    dist_image_neg_dist += torch.linalg.norm(sub_img - original_image, dim=1).mean()
+        #    dist_text_neg_dist  += torch.linalg.norm(sub_img - original_text, dim=1).mean() 
+        #    dist_image_neg_cosine += pl_module.cosine(torch.unsqueeze(sub_img,0),original_image).mean()
+        #    dist_text_neg_cosine  += pl_module.cosine(torch.unsqueeze(sub_img,0),original_text).mean()
+        
+        #ret["image_image_neg_dist"] = dist_image_neg_dist / image_representation.shape[0]
+        #ret["image_text_neg_dist"]  = dist_text_neg_dist / image_representation.shape[0]
+        #ret["image_image_neg_cosine"] = dist_image_neg_cosine / image_representation.shape[0]
+        #ret["image_text_neg_cosine"] = dist_text_neg_cosine / image_representation.shape[0]
+        
+        ret["pos_dist_attacked_img"] = torch.linalg.norm(q_image - k, dim=1).mean() #------
+        ret["pos_cosine_attacked_img"] = pl_module.cosine(q_image,k).mean() #------
+        ret["pos_dot_attacked_img"] = torch.sum(q_image * k, dim=1).mean() #------        
+        """ OLD
         for sub_img in image_representation:
             dist_image_neg_dist += torch.linalg.norm(sub_img - original_image, dim=1).mean()
             dist_text_neg_dist  += torch.linalg.norm(sub_img - original_text, dim=1).mean() 
@@ -455,22 +609,32 @@ def compute_barlowtwins_contrastive(pl_module, batch,batch_idx):
         ret["image_text_dist"] = torch.linalg.norm(image_representation - original_text, dim=1).mean()
         ret["image_image_cosine"] = pl_module.cosine(image_representation,original_image).mean()
         ret["image_text_cosine"] = pl_module.cosine(image_representation,original_text).mean()
-
+        """
+        
     if pl_module.text_view:
         if pl_module.augmentation : 
             augmented_batch = text_augmentation(pl_module, deepcopy(batch))
         else : 
             if pl_module.multimodal :
+                augmented_batch = compute_geometric(pl_module, deepcopy(batch), "barlowtwins",k_modality=k)
+                """ OLD
                 augmented_batch = compute_geometric(pl_module, deepcopy(batch), "barlowtwins",k_modality=original_image)
+                """
             else : 
                 augmented_batch = compute_geometric(pl_module, deepcopy(batch), "barlowtwins",k_modality=original_text)
                 
         infer = pl_module.infer(augmented_batch, mask_text=False, mask_image=False)
+        q_text = pl_module.barlowtwins_head(infer['cls_feats'])
+        """ OLD
         image_representation, text_representation = pl_module.barlowtwins_head(infer['image_feats'], infer['text_feats'])
-         
+        """
+        
         if pl_module.multimodal :
             # Text, Image
+            c_2 = q_text.T @ k
+            """ OLD
             c_2 = text_representation.T @ original_image   
+            """
         else : 
             # Text, Text
             c_2 = text_representation.T @ original_text
@@ -483,13 +647,18 @@ def compute_barlowtwins_contrastive(pl_module, batch,batch_idx):
         loss = loss + on_diag + pl_module.adv_lr * off_diag
         loss_num += 1   
         
-        ret["barlowtwins_loss_invariance_text"] = on_diag
-        ret["barlowtwins_loss_redundancy_text"] = pl_module.adv_lr * off_diag        
+        ret["barlowtwins_loss_invariance_text"] = on_diag 
+        ret["barlowtwins_loss_redundancy_text"] = pl_module.adv_lr * off_diag          
         
         dist_image_neg_dist = 0
         dist_text_neg_dist  = 0
         dist_image_neg_cosine = 0
         dist_text_neg_cosine  = 0
+        
+        ret["pos_dist_attacked_txt"] = torch.linalg.norm(q_text - k, dim=1).mean() #------
+        ret["pos_cosine_attacked_txt"] = pl_module.cosine(q_text,k).mean() #------
+        ret["pos_dot_attacked_txt"] = torch.sum(q_text * k, dim=1).mean() #------         
+        """ OLD
         for sub_text in text_representation:
             dist_image_neg_dist += torch.linalg.norm(sub_text - original_image, dim=1).mean()
             dist_text_neg_dist  += torch.linalg.norm(sub_text - original_text, dim=1).mean() 
@@ -505,14 +674,43 @@ def compute_barlowtwins_contrastive(pl_module, batch,batch_idx):
         ret["text_image_dist"] = torch.linalg.norm(text_representation - original_image, dim=1).mean()
         ret["text_text_cosine"] = pl_module.cosine(text_representation,original_text).mean()
         ret["text_image_cosine"] = pl_module.cosine(text_representation,original_image).mean()
-        
+        """
         
     ret["barlowtwins_loss"] = loss / loss_num  # * pl_module.loss_weight
 
     phase = "train" if pl_module.training else "val"
     loss = getattr(pl_module, f"{phase}_barlowtwins_loss")(ret["barlowtwins_loss"])
     pl_module.log(f"barlowtwins/{phase}/loss", loss)
-    
+
+  
+    if pl_module.image_view:
+        # L2 distance
+        pl_module.log(f"barlowtwins_dist_{phase}_L2/Pos_attacked_img",ret["pos_dist_attacked_img"])
+        # Cosine Distance
+        pl_module.log(f"barlowtwins_dist_{phase}_Cosine/Pos_attacked_img",ret["pos_cosine_attacked_img"])
+        # Dot Distance
+        pl_module.log(f"barlowtwins_dist_{phase}_Dot/Pos_attacked_img",ret["pos_dot_attacked_img"])        
+        
+        # Loss_invariance and Loss redundancy
+        loss_invariance_img = getattr(pl_module, f"{phase}_barlowtwins_loss_invariance_img")(ret["barlowtwins_loss_invariance_img"])
+        pl_module.log(f"barlowtwins/{phase}/barlowtwins_loss_invariance_img", loss_invariance_img)  
+        loss_redundancy_img = getattr(pl_module, f"{phase}_barlowtwins_loss_redundancy_img")(ret["barlowtwins_loss_redundancy_img"])
+        pl_module.log(f"barlowtwins/{phase}/barlowtwins_loss_redundancy_img", loss_redundancy_img)         
+        
+    if pl_module.text_view:
+        # L2 distance
+        pl_module.log(f"barlowtwins_dist_{phase}_L2/Pos_attacked_txt",ret["pos_dist_attacked_txt"]) 
+        # Cosine Distance   
+        pl_module.log(f"barlowtwins_dist_{phase}_Cosine/Pos_attacked_txt",ret["pos_cosine_attacked_txt"])
+        # Dot Distance   
+        pl_module.log(f"barlowtwins_dist_{phase}_Dot/Pos_attacked_txt",ret["pos_dot_attacked_txt"])        
+        
+        # Loss_invariance and Loss redundancy
+        loss_invariance_text = getattr(pl_module, f"{phase}_barlowtwins_loss_invariance_text")(ret["barlowtwins_loss_invariance_text"])
+        pl_module.log(f"barlowtwins/{phase}/barlowtwins_loss_invariance_text", loss_invariance_text)  
+        loss_redundancy_text = getattr(pl_module, f"{phase}_barlowtwins_loss_redundancy_text")(ret["barlowtwins_loss_redundancy_text"])
+        pl_module.log(f"barlowtwins/{phase}/barlowtwins_loss_redundancy_text", loss_redundancy_text)      
+    """
     pl_module.log(f"barlowtwins_dist_{phase}/Original/cosine/img_txt", pl_module.cosine(original_image,original_text).mean())
     if pl_module.image_view:
         # L2 distance
@@ -562,7 +760,7 @@ def compute_barlowtwins_contrastive(pl_module, batch,batch_idx):
         pl_module.log(f"barlowtwins/{phase}/barlowtwins_loss_invariance_text", loss_invariance_text)  
         loss_redundancy_text = getattr(pl_module, f"{phase}_barlowtwins_loss_redundancy_text")(ret["barlowtwins_loss_redundancy_text"])
         pl_module.log(f"barlowtwins/{phase}/barlowtwins_loss_redundancy_text", loss_redundancy_text)  
-            
+     """    
     return ret
 
 def compute_mlm(pl_module, batch):
@@ -893,6 +1091,102 @@ def compute_geometric_finetuning(pl_module, batch,loss_name) :
     
     return batch,txt_original_attacked
 
+def compute_nlvr2_attack(pl_module, batch):
+    ret = {}
+    
+    infer1 = pl_module.infer(batch, mask_text=False, mask_image=False, image_token_type_idx=1)
+    infer2 = pl_module.infer(batch, mask_text=False, mask_image=False, image_token_type_idx=2)
+    # NlVR2 output clean
+    cls_feats = torch.cat([infer1["cls_feats"], infer2["cls_feats"]], dim=-1)
+    ori_logits = pl_module.nlvr2_classifier(cls_feats)
+    nlvr2_labels = batch["answers"]
+    nlvr2_labels = torch.tensor(nlvr2_labels).to(pl_module.device).long()
+    ori_loss = F.cross_entropy(ori_logits, nlvr2_labels)
+    ret["nlvr2_original_logits"] = ori_logits
+    ret["nlvr2_original_loss"] = ori_loss
+    
+    attack_batch = None
+    if pl_module.image_view:
+        attacked_batch = compute_pgd(pl_module, deepcopy(batch), "nlvr2_attacked")
+        
+        infer1_a = pl_module.infer(attacked_batch, mask_text=False, mask_image=False, image_token_type_idx=1)
+        infer2_a = pl_module.infer(attacked_batch, mask_text=False, mask_image=False, image_token_type_idx=2)
+        cls_feats = torch.cat([infer1_a["cls_feats"], infer2_a["cls_feats"]], dim=-1)
+        nlvr2_logits = pl_module.nlvr2_classifier(cls_feats)
+        nlvr2_loss = F.cross_entropy(nlvr2_logits, nlvr2_labels)
+
+        ret["nlvr2_attacked_logits"] = nlvr2_logits
+        ret["nlvr2_attacked_loss"] = nlvr2_loss
+
+    if pl_module.text_view:
+        now_batch = attack_batch if attack_batch is not None else batch
+        attacked_batch = compute_geometric(pl_module, deepcopy(now_batch), "nlvr2_attacked")
+        
+        infer1_a = pl_module.infer(attacked_batch, mask_text=False, mask_image=False, image_token_type_idx=1)
+        infer2_a = pl_module.infer(attacked_batch, mask_text=False, mask_image=False, image_token_type_idx=2)
+        cls_feats = torch.cat([infer1_a["cls_feats"], infer2_a["cls_feats"]], dim=-1)
+        nlvr2_logits = pl_module.nlvr2_classifier(cls_feats)
+        nlvr2_loss = F.cross_entropy(nlvr2_logits, nlvr2_labels)
+
+        ret["nlvr2_attacked_logits"] = nlvr2_logits
+        ret["nlvr2_attacked_loss"] = nlvr2_loss
+        
+    phase = "train" if pl_module.training else "val"
+    if phase == "train":
+        # there may be some bugs, but so far I just want to evaluation
+        loss = getattr(pl_module, f"{phase}_nlvr2_attacked_loss")(ret["nlvr2_attacked_loss"])
+        acc = getattr(pl_module, f"{phase}_nlvr2_attacked_accuracy")(
+            ret["nlvr2_attacked_logits"], ret["nlvr2_attacked_labels"]
+        )
+        pl_module.log(f"nlvr2_attacked/{phase}/loss", loss)
+        pl_module.log(f"nlvr2_attacked/{phase}/accuracy", acc)
+    else:
+        dev_batches = [i for i, n in enumerate(batch["table_name"]) if "dev" in n]
+        test_batches = [i for i, n in enumerate(batch["table_name"]) if "test" in n]
+
+        if dev_batches:
+            dev_loss = getattr(pl_module, f"dev_nlvr2_original_loss")(
+                F.cross_entropy(ret["nlvr2_original_logits"][dev_batches], nlvr2_labels[dev_batches])
+            )
+            dev_acc = getattr(pl_module, f"dev_nlvr2_original_accuracy")(
+                ret["nlvr2_original_logits"][dev_batches], nlvr2_labels[dev_batches]
+            )
+            pl_module.log(f"nlvr2_original/dev/loss", dev_loss)
+            pl_module.log(f"nlvr2_original/dev/accuracy", dev_acc)
+            if pl_module.image_view or pl_module.text_view:
+                dev_loss = getattr(pl_module, f"dev_nlvr2_attacked_loss")(
+                    F.cross_entropy(ret["nlvr2_attacked_logits"][dev_batches], nlvr2_labels[dev_batches])
+                )
+                dev_acc = getattr(pl_module, f"dev_nlvr2_attacked_accuracy")(
+                    ret["nlvr2_attacked_logits"][dev_batches], nlvr2_labels[dev_batches]
+                )
+                pl_module.log(f"nlvr2_attacked/dev/loss", dev_loss)
+                pl_module.log(f"nlvr2_attacked/dev/accuracy", dev_acc)
+        if test_batches:
+            test_loss = getattr(pl_module, f"test_nlvr2_original_loss")(
+                F.cross_entropy(ret["nlvr2_original_logits"][test_batches], nlvr2_labels[test_batches])
+            )
+            test_acc = getattr(pl_module, f"test_nlvr2_original_accuracy")(
+                ret["nlvr2_original_logits"][test_batches], nlvr2_labels[test_batches]
+            )
+            pl_module.log(f"nlvr2_original/test/loss", test_loss)
+            pl_module.log(f"nlvr2_original/test/accuracy", test_acc)
+            if pl_module.image_view or pl_module.text_view:
+                test_loss = getattr(pl_module, f"test_nlvr2_attacked_loss")(
+                    F.cross_entropy(ret["nlvr2_attacked_logits"][test_batches], nlvr2_labels[test_batches])
+                )
+                test_acc = getattr(pl_module, f"test_nlvr2_attacked_accuracy")(
+                    ret["nlvr2_attacked_logits"][test_batches], nlvr2_labels[test_batches]
+                )
+                pl_module.log(f"nlvr2_attacked/test/loss", test_loss)
+                pl_module.log(f"nlvr2_attacked/test/accuracy", test_acc)
+                
+    return ret
+
+
+
+
+"""
 saving = 99
 def compute_nlvr2_attack(pl_module, batch):
     global saving
@@ -1016,7 +1310,7 @@ def compute_nlvr2_attack(pl_module, batch):
                 
     return ret
                                       
-"""
+"#""
                     
     phase = "train" if pl_module.training else "val"              
     if phase == "train":
@@ -1136,8 +1430,6 @@ def compute_irtr_attacked(pl_module, batch):
         [batch[f"false_text_{i}_labels"] for i in range(false_len)], dim=1
     )
 
-    # print(batch["text_ids"])
-    # print(batch["false_text_0_ids"])
     text_ids = torch.cat([batch["text_ids"].unsqueeze(1), text_ids], dim=1)
     text_masks = torch.cat([batch["text_masks"].unsqueeze(1), text_masks], dim=1)
     text_labels = torch.cat([batch["text_labels"].unsqueeze(1), text_labels], dim=1)
@@ -1151,14 +1443,15 @@ def compute_irtr_attacked(pl_module, batch):
             "text_labels": rearrange(text_labels, "bs fs tl -> (bs fs) tl"),
         }
     )
-    score = pl_module.rank_output(infer["cls_feats"])[:, 0]
+    #score = pl_module.rank_output(infer["cls_feats"])[:, 0]
+    score = pl_module.moco_head(infer["cls_feats"])[:, 0]
     score = rearrange(score, "(bs fs) -> bs fs", bs=_bs, fs=false_len + 1)
     answer = torch.zeros(_bs).to(score).long()
     irtr_loss = F.cross_entropy(score, answer)
     ret["irtr_original_loss"] = irtr_loss
     ret["irtr_original_logits"] = score
     
-    if pl_module.image_attack:
+    if pl_module.image_view:
         batch = compute_pgd(pl_module, deepcopy(batch), "irtr_attacked")
         _bs, _c, _h, _w = batch["image"][0].shape
         false_len = pl_module.hparams.config["draw_false_text"]
@@ -1185,13 +1478,14 @@ def compute_irtr_attacked(pl_module, batch):
                 "text_labels": rearrange(text_labels, "bs fs tl -> (bs fs) tl"),
             }
         )
-        score = pl_module.rank_output(infer["cls_feats"])[:, 0]
+        #score = pl_module.rank_output(infer["cls_feats"])[:, 0]
+        score = pl_module.moco_head(infer["cls_feats"])[:, 0]
         score = rearrange(score, "(bs fs) -> bs fs", bs=_bs, fs=false_len + 1)
         irtr_loss = F.cross_entropy(score, answer)
         ret["irtr_attacked_loss"] = irtr_loss
         ret["irtr_attacked_logits"] = score
 
-    if pl_module.text_attack:
+    if pl_module.text_view:
         batch = compute_geometric(pl_module, deepcopy(batch), "irtr_attacked")
         _bs, _c, _h, _w = batch["image"][0].shape
         false_len = pl_module.hparams.config["draw_false_text"]
@@ -1218,7 +1512,8 @@ def compute_irtr_attacked(pl_module, batch):
                 "text_labels": rearrange(text_labels, "bs fs tl -> (bs fs) tl"),
             }
         )
-        score = pl_module.rank_output(infer["cls_feats"])[:, 0]
+        #score = pl_module.rank_output(infer["cls_feats"])[:, 0]
+        score = pl_module.moco_head(infer["cls_feats"])[:, 0]
         score = rearrange(score, "(bs fs) -> bs fs", bs=_bs, fs=false_len + 1)
         irtr_loss = F.cross_entropy(score, answer)
         ret["irtr_attacked_loss"] = irtr_loss
@@ -1231,7 +1526,7 @@ def compute_irtr_attacked(pl_module, batch):
     acc = getattr(pl_module, f"{phase}_irtr_original_accuracy")(ret["irtr_original_logits"], answer)
     pl_module.log(f"irtr_attacked/{phase}/original_accuracy", acc)
     
-    if pl_module.text_attack or pl_module.image_attack:
+    if pl_module.text_view or pl_module.image_view:
         irtr_loss = getattr(pl_module, f"{phase}_irtr_attacked_loss")(ret["irtr_attacked_loss"])
         pl_module.log(f"irtr_attacked/{phase}/irtr_attacked_loss", irtr_loss)
         acc = getattr(pl_module, f"{phase}_irtr_attacked_accuracy")(ret["irtr_attacked_logits"], answer)
@@ -1467,7 +1762,7 @@ def compute_attacked_irtr_recall(pl_module):
     
     text_preload_attacked = list()
     image_preload_attacked = list()
-    if pl_module.text_attack or pl_module.image_attack:
+    if pl_module.text_view or pl_module.image_view:
         for _b in tqdm.tqdm(text_loader, desc="attacked data prefetch loop"):
             _b = {
                 "text": _b["text"],
@@ -1477,7 +1772,7 @@ def compute_attacked_irtr_recall(pl_module):
                 "image": [_b["image"][0].to(pl_module.device)],
                 "img_index": _b["img_index"],
             }
-            if pl_module.text_attack:
+            if pl_module.text_view:
                 _b = compute_geometric(pl_module, deepcopy(_b), "irtr")
                 text_preload_attacked.append(
                     {
@@ -1487,7 +1782,7 @@ def compute_attacked_irtr_recall(pl_module):
                         "img_index": _b["img_index"],
                     }
                 )
-            if pl_module.image_attack:
+            if pl_module.image_view:
                 _b = compute_pgd(pl_module, deepcopy(_b), "irtr")
                 (ie, im, _, _) = pl_module.transformer.visual_embed(
                     _b["image"][0],
@@ -1510,6 +1805,36 @@ def compute_attacked_irtr_recall(pl_module):
             im = _im.expand(fblen, l)
 
             with torch.cuda.amp.autocast():
+                score = pl_module.rank_output(
+                    pl_module.infer(
+                        {
+                            "text_ids": txt_batch["text_ids"],
+                            "text_masks": txt_batch["text_masks"],
+                            "text_labels": txt_batch["text_labels"],
+                        },
+                        image_embeds=ie,
+                        image_masks=im,
+                    )["cls_feats"]
+                )[:, 0]
+
+            img_batch_score.append(score)
+
+        img_batch_score = torch.cat(img_batch_score)
+        rank_scores.append(img_batch_score.cpu().tolist())
+        rank_iids.append(_iid)    
+    
+    """
+    for img_batch in tqdm.tqdm(image_preload, desc="rank loop"):
+        _ie, _im, _iid = img_batch
+        _, l, c = _ie.shape
+
+        img_batch_score = list()
+        for txt_batch in text_preload:
+            fblen = len(txt_batch["text_ids"])
+            ie = _ie.expand(fblen, l, c)
+            im = _im.expand(fblen, l)
+            # -------------------------------------------- Very different --------------------
+            with torch.cuda.amp.autocast():
                 infer = pl_module.infer(
                     {
                         "text_ids": txt_batch["text_ids"],
@@ -1524,13 +1849,13 @@ def compute_attacked_irtr_recall(pl_module):
                 txt_q = nn.functional.normalize(txt_representation, dim=1)
                 score = torch.einsum('nc,nc->n', [img_q, txt_q])  # .unsqueeze(-1)
                 # print(txt_batch["img_index"], score)
-
+            # ------------------------------------------- Very different --------------------
             img_batch_score.append(score)
 
         img_batch_score = torch.cat(img_batch_score)
         rank_scores.append(img_batch_score.cpu().tolist())
         rank_iids.append(_iid)
-
+    """
     torch.distributed.barrier()
     gather_rank_scores = all_gather(rank_scores)
     gather_rank_iids = all_gather(rank_iids)

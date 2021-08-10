@@ -118,12 +118,14 @@ class PGDAttack_moco(PGDAttack):
         self.token_type_embeddings = deepcopy(pl_module.token_type_embeddings)
         self.transformer = deepcopy(pl_module.transformer)
         self.moco_head = deepcopy(pl_module.moco_head)
-
+        self.pooler = deepcopy(pl_module.pooler) # New
+        
     def vilt_zero_grad(self):
         self.text_embeddings.zero_grad()
         self.transformer.zero_grad()
         self.token_type_embeddings.zero_grad()
         self.moco_head.zero_grad()
+        self.pooler.zero_grad() # New
     
     def pgd_attack(self, pl_module, batch, k_modality = None): # k_image
         self.build_mini_vilt(pl_module)
@@ -140,14 +142,22 @@ class PGDAttack_moco(PGDAttack):
                 try:
                     batch['image'][0] = (img_init + img_delta)  # .to(pl_module.device)
                     infer = self.infer(batch, mask_text=False, mask_image=False)
+                    projection_cls_feats = self.moco_head(infer["cls_feats"])
+                    q_img_attack = nn.functional.normalize(projection_cls_feats, dim=1)                    
+                    """ OLD
                     image_representation_q, text_representation_q = self.moco_head(infer['image_feats'], infer['text_feats'])
                     q_attacked = nn.functional.normalize(image_representation_q, dim=1)
+                    """
                 except:
                     print("problem in step ", astep)
                     sys.exit("STOPP")
-                # RMCL Loss
+                # RMCL Loss 
+                l_pos = torch.einsum('nc,nc->n', [q_img_attack, k_modality]).unsqueeze(-1) # k_image
+                l_neg = torch.einsum('nc,ck->nk', [q_img_attack, self.pl_module.proj_queue.clone().detach()])
+                """OLD
                 l_pos = torch.einsum('nc,nc->n', [q_attacked, k_modality]).unsqueeze(-1) # k_image
                 l_neg = torch.einsum('nc,ck->nk', [q_attacked, self.pl_module.image_queue.clone().detach()])
+                """
                 logits = torch.cat([l_pos, l_neg], dim=1)
                 logits /= self.pl_module.temperature
                 labels = torch.zeros(logits.shape[0], dtype=torch.long)
@@ -184,13 +194,14 @@ class PGDAttack_bartlowtwins(PGDAttack):
         self.token_type_embeddings = deepcopy(pl_module.token_type_embeddings)
         self.transformer = deepcopy(pl_module.transformer)
         self.barlowtwins_head = deepcopy(pl_module.barlowtwins_head)
-   
+        self.pooler = deepcopy(pl_module.pooler) # New
     def vilt_zero_grad(self):
         self.text_embeddings.zero_grad()
         self.transformer.zero_grad()
         self.token_type_embeddings.zero_grad()
         self.barlowtwins_head.zero_grad()
-    
+        self.pooler.zero_grad() # New
+        
     def pgd_attack(self, pl_module, batch, k_modality=None): # k_image
         
         def off_diagonal(x):
@@ -210,10 +221,13 @@ class PGDAttack_bartlowtwins(PGDAttack):
             with torch.enable_grad():
                 batch['image'][0] = (img_init + img_delta)  # .to(pl_module.device)
                 infer = self.infer(batch, mask_text=False, mask_image=False)
+                q_image = self.barlowtwins_head(infer['cls_feats'])
+                c = torch.mm(q_image.T, k_modality) / q_image.shape[0]
+                """ OLD
                 image_representation, _ = self.barlowtwins_head(infer['image_feats'], infer['text_feats'])
                 # c = image_representation.T @ k_image
                 c = torch.mm(image_representation.T, k_modality) / image_representation.shape[0]
-
+                """
                 # c.div_(pl_module.per_step_bs)
                 # torch.distributed.all_reduce(c)
 
@@ -254,14 +268,16 @@ class PGDAttack_nlvr2(PGDAttack):
         self.transformer = deepcopy(pl_module.transformer)
         self.pooler = deepcopy(pl_module.pooler)
         self.nlvr2_classifier = deepcopy(pl_module.nlvr2_classifier)
-    
+        self.pooler = deepcopy(pl_module.pooler) # New
+        
     def vilt_zero_grad(self):
         self.text_embeddings.zero_grad()
         self.transformer.zero_grad()
         self.token_type_embeddings.zero_grad()
         self.pooler.zero_grad()
         self.nlvr2_classifier.zero_grad()
-    
+        self.pooler.zero_grad() # New
+        
     def pgd_attack(self, pl_module, batch, k_modality=None):
         self.build_mini_vilt(pl_module)
         loss_fct = nn.CrossEntropyLoss()
@@ -339,13 +355,14 @@ class PGDAttack_irtr(PGDAttack):
         self.token_type_embeddings = deepcopy(pl_module.token_type_embeddings)
         self.transformer = deepcopy(pl_module.transformer)
         self.moco_head = deepcopy(pl_module.moco_head)
-    
+        self.pooler = deepcopy(pl_module.pooler) # New
     def vilt_zero_grad(self):
         self.text_embeddings.zero_grad()
         self.transformer.zero_grad()
         self.token_type_embeddings.zero_grad()
         self.moco_head.zero_grad()
-    
+        self.pooler.zero_grad() # New
+        
     def pgd_attack(self, pl_module, batch, k_modality):
         self.build_mini_vilt(pl_module)
         loss_fct = nn.CrossEntropyLoss()
@@ -359,22 +376,36 @@ class PGDAttack_irtr(PGDAttack):
             img_delta.requires_grad_(True)
             with torch.enable_grad():
                 try:
+                    
+                    batch['image'][0] = (img_init + img_delta)  # .to(pl_module.device)
+                    infer = self.infer(batch, mask_text=False, mask_image=False)
+                    projection_cls_feats = self.moco_head(infer["cls_feats"])
+                    q_img_attack = nn.functional.normalize(projection_cls_feats, dim=1)                     
+                    
+                    """ OLD
                     batch['image'][0] = (img_init + img_delta)  # .to(pl_module.device)
                     infer = self.infer(batch, mask_text=False, mask_image=False)
                     image_representation, text_representation = self.moco_head(infer['image_feats'], infer['text_feats'])
                     image_representation = nn.functional.normalize(image_representation, dim=1)
                     text_representation = nn.functional.normalize(text_representation, dim=1)
+                    """
                 except:
                     print("problem in step ", astep)
                     sys.exit("STOPP")
                     
                 batch_scores = []
                 batch_labels = []
+
+                for q_idx, q_att in enumerate(q_img_attack): ## Wrong
+                    scores = torch.einsum('nc,ck->nk', [q_att.unsqueeze(0), text_representation.T])
+                    batch_scores.append(scores)
+                    batch_labels.append(q_idx)
+                """
                 for q_idx, q_image in enumerate(image_representation):
                     scores = torch.einsum('nc,ck->nk', [q_image.unsqueeze(0), text_representation.T])
                     batch_scores.append(scores)
                     batch_labels.append(q_idx)
-
+                """
                 logits = torch.cat(batch_scores).view(len(batch_labels), -1)
                 labels = torch.tensor(batch_labels).type_as(logits)
                 loss = loss_fct(logits.float(), labels.long()) / (1.0 * self.adv_steps_img)
