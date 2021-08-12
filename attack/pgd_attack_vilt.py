@@ -1,7 +1,6 @@
 import torch
 from copy import deepcopy
 import torch.nn as nn
-from einops import rearrange
 
 class PGDAttack:
     def __init__(self, config, contrastive_framework):
@@ -16,6 +15,7 @@ class PGDAttack:
         self.transformer = None
         self.token_type_embeddings = None
         self.pooler = None
+    
     
     def build_mini_vilt(self, pl_module):
         raise NotImplementedError(f"Build_mini_vilt of {self.contrastive_framework} isn't implemented.")
@@ -104,28 +104,30 @@ class PGDAttack:
         }
         
         return ret
-    
+
 
 class PGDAttack_moco(PGDAttack):
     def __init__(self, config):
         super().__init__(config, "moco")
         # a mini ViLTransformerSS
         self.moco_head = None
-    
+
     def build_mini_vilt(self, pl_module):
         self.pl_module = pl_module
         self.text_embeddings = deepcopy(pl_module.text_embeddings)
         self.token_type_embeddings = deepcopy(pl_module.token_type_embeddings)
         self.transformer = deepcopy(pl_module.transformer)
         self.moco_head = deepcopy(pl_module.moco_head)
-    
+        self.pooler = deepcopy(pl_module.pooler) # New
+        
     def vilt_zero_grad(self):
         self.text_embeddings.zero_grad()
         self.transformer.zero_grad()
         self.token_type_embeddings.zero_grad()
         self.moco_head.zero_grad()
+        self.pooler.zero_grad() # New
     
-    def pgd_attack(self, pl_module, batch, k_image):
+    def pgd_attack(self, pl_module, batch, k_modality = None): # k_image
         self.build_mini_vilt(pl_module)
         loss_fct = nn.CrossEntropyLoss()
         # Get the original img
@@ -140,14 +142,22 @@ class PGDAttack_moco(PGDAttack):
                 try:
                     batch['image'][0] = (img_init + img_delta)  # .to(pl_module.device)
                     infer = self.infer(batch, mask_text=False, mask_image=False)
+                    projection_cls_feats = self.moco_head(infer["cls_feats"])
+                    q_img_attack = nn.functional.normalize(projection_cls_feats, dim=1)                    
+                    """ OLD
                     image_representation_q, text_representation_q = self.moco_head(infer['image_feats'], infer['text_feats'])
                     q_attacked = nn.functional.normalize(image_representation_q, dim=1)
+                    """
                 except:
                     print("problem in step ", astep)
                     sys.exit("STOPP")
-                # RMCL Loss
-                l_pos = torch.einsum('nc,nc->n', [q_attacked, k_image]).unsqueeze(-1)
+                # RMCL Loss 
+                l_pos = torch.einsum('nc,nc->n', [q_img_attack, k_modality]).unsqueeze(-1) # k_image
+                l_neg = torch.einsum('nc,ck->nk', [q_img_attack, self.pl_module.proj_queue.clone().detach()])
+                """OLD
+                l_pos = torch.einsum('nc,nc->n', [q_attacked, k_modality]).unsqueeze(-1) # k_image
                 l_neg = torch.einsum('nc,ck->nk', [q_attacked, self.pl_module.image_queue.clone().detach()])
+                """
                 logits = torch.cat([l_pos, l_neg], dim=1)
                 logits /= self.pl_module.temperature
                 labels = torch.zeros(logits.shape[0], dtype=torch.long)
@@ -170,7 +180,7 @@ class PGDAttack_moco(PGDAttack):
                 img_delta = torch.clamp(img_delta, -self.adv_max_norm_img, self.adv_max_norm_img).detach()
                 
         return img_delta
-    
+
     
 class PGDAttack_bartlowtwins(PGDAttack):
     def __init__(self, config):
@@ -184,14 +194,15 @@ class PGDAttack_bartlowtwins(PGDAttack):
         self.token_type_embeddings = deepcopy(pl_module.token_type_embeddings)
         self.transformer = deepcopy(pl_module.transformer)
         self.barlowtwins_head = deepcopy(pl_module.barlowtwins_head)
-   
+        self.pooler = deepcopy(pl_module.pooler) # New
     def vilt_zero_grad(self):
         self.text_embeddings.zero_grad()
         self.transformer.zero_grad()
         self.token_type_embeddings.zero_grad()
         self.barlowtwins_head.zero_grad()
-    
-    def pgd_attack(self, pl_module, batch, k_image):
+        self.pooler.zero_grad() # New
+        
+    def pgd_attack(self, pl_module, batch, k_modality=None): # k_image
         
         def off_diagonal(x):
             n, m = x.shape
@@ -210,10 +221,13 @@ class PGDAttack_bartlowtwins(PGDAttack):
             with torch.enable_grad():
                 batch['image'][0] = (img_init + img_delta)  # .to(pl_module.device)
                 infer = self.infer(batch, mask_text=False, mask_image=False)
+                q_image = self.barlowtwins_head(infer['cls_feats'])
+                c = torch.mm(q_image.T, k_modality) / q_image.shape[0]
+                """ OLD
                 image_representation, _ = self.barlowtwins_head(infer['image_feats'], infer['text_feats'])
                 # c = image_representation.T @ k_image
-                c = torch.mm(image_representation.T, k_image) / image_representation.shape[0]
-
+                c = torch.mm(image_representation.T, k_modality) / image_representation.shape[0]
+                """
                 # c.div_(pl_module.per_step_bs)
                 # torch.distributed.all_reduce(c)
 
@@ -239,8 +253,7 @@ class PGDAttack_bartlowtwins(PGDAttack):
                 img_delta = torch.clamp(img_delta, -self.adv_max_norm_img, self.adv_max_norm_img).detach()
         
         return img_delta
-
-
+    
 class PGDAttack_nlvr2(PGDAttack):
     def __init__(self, config):
         super().__init__(config, "nlvr2")
@@ -255,15 +268,17 @@ class PGDAttack_nlvr2(PGDAttack):
         self.transformer = deepcopy(pl_module.transformer)
         self.pooler = deepcopy(pl_module.pooler)
         self.nlvr2_classifier = deepcopy(pl_module.nlvr2_classifier)
-    
+        self.pooler = deepcopy(pl_module.pooler) # New
+        
     def vilt_zero_grad(self):
         self.text_embeddings.zero_grad()
         self.transformer.zero_grad()
         self.token_type_embeddings.zero_grad()
         self.pooler.zero_grad()
         self.nlvr2_classifier.zero_grad()
-    
-    def pgd_attack(self, pl_module, batch, k_text=None):
+        self.pooler.zero_grad() # New
+        
+    def pgd_attack(self, pl_module, batch, k_modality=None):
         self.build_mini_vilt(pl_module)
         loss_fct = nn.CrossEntropyLoss()
         # Get the original img
@@ -290,8 +305,9 @@ class PGDAttack_nlvr2(PGDAttack):
                 # Compute the cross-entropy
                 nlvr2_labels = batch["answers"]
                 nlvr2_labels = torch.tensor(nlvr2_labels).to(self.pl_module.device).long()
-                loss = loss_fct(nlvr2_logits, nlvr2_labels)
+                loss = loss_fct(nlvr2_logits, nlvr2_labels)/self.adv_steps_img
                 # calculate x.grad
+                
                 loss.backward()
             
             if self.attack_idx[0]:
@@ -324,8 +340,8 @@ class PGDAttack_nlvr2(PGDAttack):
                 if self.adv_max_norm_img > 0:
                     img_delta_1 = torch.clamp(img_delta_1, -self.adv_max_norm_img, self.adv_max_norm_img).detach()
         
-        return img_delta_0, img_delta_1
-
+        return img_delta_0, img_delta_1     
+    
 
 class PGDAttack_irtr(PGDAttack):
     def __init__(self, config):
@@ -339,14 +355,15 @@ class PGDAttack_irtr(PGDAttack):
         self.token_type_embeddings = deepcopy(pl_module.token_type_embeddings)
         self.transformer = deepcopy(pl_module.transformer)
         self.moco_head = deepcopy(pl_module.moco_head)
-    
+        self.pooler = deepcopy(pl_module.pooler) # New
     def vilt_zero_grad(self):
         self.text_embeddings.zero_grad()
         self.transformer.zero_grad()
         self.token_type_embeddings.zero_grad()
         self.moco_head.zero_grad()
-    
-    def pgd_attack(self, pl_module, batch, k_image):
+        self.pooler.zero_grad() # New
+        
+    def pgd_attack(self, pl_module, batch, k_modality):
         self.build_mini_vilt(pl_module)
         loss_fct = nn.CrossEntropyLoss()
         # Get the original img
@@ -359,22 +376,36 @@ class PGDAttack_irtr(PGDAttack):
             img_delta.requires_grad_(True)
             with torch.enable_grad():
                 try:
+                    
+                    batch['image'][0] = (img_init + img_delta)  # .to(pl_module.device)
+                    infer = self.infer(batch, mask_text=False, mask_image=False)
+                    projection_cls_feats = self.moco_head(infer["cls_feats"])
+                    q_img_attack = nn.functional.normalize(projection_cls_feats, dim=1)                     
+                    
+                    """ OLD
                     batch['image'][0] = (img_init + img_delta)  # .to(pl_module.device)
                     infer = self.infer(batch, mask_text=False, mask_image=False)
                     image_representation, text_representation = self.moco_head(infer['image_feats'], infer['text_feats'])
                     image_representation = nn.functional.normalize(image_representation, dim=1)
                     text_representation = nn.functional.normalize(text_representation, dim=1)
+                    """
                 except:
                     print("problem in step ", astep)
                     sys.exit("STOPP")
                     
                 batch_scores = []
                 batch_labels = []
+
+                for q_idx, q_att in enumerate(q_img_attack): ## Wrong
+                    scores = torch.einsum('nc,ck->nk', [q_att.unsqueeze(0), text_representation.T])
+                    batch_scores.append(scores)
+                    batch_labels.append(q_idx)
+                """
                 for q_idx, q_image in enumerate(image_representation):
                     scores = torch.einsum('nc,ck->nk', [q_image.unsqueeze(0), text_representation.T])
                     batch_scores.append(scores)
                     batch_labels.append(q_idx)
-
+                """
                 logits = torch.cat(batch_scores).view(len(batch_labels), -1)
                 labels = torch.tensor(batch_labels).type_as(logits)
                 loss = loss_fct(logits.float(), labels.long()) / (1.0 * self.adv_steps_img)
@@ -396,89 +427,4 @@ class PGDAttack_irtr(PGDAttack):
             if self.adv_max_norm_img > 0:
                 img_delta = torch.clamp(img_delta, -self.adv_max_norm_img, self.adv_max_norm_img).detach()
         
-        return img_delta
-
-
-'''
-class PGDAttack_irtr(PGDAttack):
-    def __init__(self, config):
-        super().__init__(config, "irtr")
-        # a mini ViLTransformerSS
-        self.rank_output = None
-    
-    def build_mini_vilt(self, pl_module):
-        self.pl_module = pl_module
-        self.text_embeddings = deepcopy(pl_module.text_embeddings)
-        self.token_type_embeddings = deepcopy(pl_module.token_type_embeddings)
-        self.transformer = deepcopy(pl_module.transformer)
-        self.pooler = deepcopy(pl_module.pooler)
-        self.rank_output = deepcopy(pl_module.rank_output)
-    
-    def vilt_zero_grad(self):
-        self.text_embeddings.zero_grad()
-        self.transformer.zero_grad()
-        self.token_type_embeddings.zero_grad()
-        self.pooler.zero_grad()
-        self.rank_output.zero_grad()
-    
-    def pgd_attack(self, pl_module, batch, k_text=None):
-        self.build_mini_vilt(pl_module)
-        loss_fct = nn.CrossEntropyLoss()
-        # Get the original img
-        img_init = batch['image'][0]
-        # Initialize the delta as zero vectors
-        img_delta = torch.zeros_like(img_init)
-        self.vilt_zero_grad()
-        for astep in range(self.adv_steps_img):
-            # Need to get the gradient for each batch of image features
-            img_delta.requires_grad_(True)
-            with torch.enable_grad():
-                batch['image'][0] = (img_init + img_delta)  # .to(pl_module.device)
-                _bs, _c, _h, _w = batch["image"][0].shape
-                false_len = pl_module.hparams.config["draw_false_text"]
-                text_ids = torch.stack(
-                    [batch[f"false_text_{i}_ids"] for i in range(false_len)], dim=1
-                )
-                text_masks = torch.stack(
-                    [batch[f"false_text_{i}_masks"] for i in range(false_len)], dim=1
-                )
-                text_labels = torch.stack(
-                    [batch[f"false_text_{i}_labels"] for i in range(false_len)], dim=1
-                )
-
-                text_ids = torch.cat([batch["text_ids"].unsqueeze(1), text_ids], dim=1)
-                text_masks = torch.cat([batch["text_masks"].unsqueeze(1), text_masks], dim=1)
-                text_labels = torch.cat([batch["text_labels"].unsqueeze(1), text_labels], dim=1)
-                images = batch["image"][0].unsqueeze(1).expand(_bs, false_len + 1, _c, _h, _w)
-
-                infer = self.infer(
-                    {
-                        "image": [rearrange(images, "bs fs c h w -> (bs fs) c h w")],
-                        "text_ids": rearrange(text_ids, "bs fs tl -> (bs fs) tl"),
-                        "text_masks": rearrange(text_masks, "bs fs tl -> (bs fs) tl"),
-                        "text_labels": rearrange(text_labels, "bs fs tl -> (bs fs) tl"),
-                    }
-                )
-                score = self.rank_output(infer["cls_feats"])[:, 0]
-                score = rearrange(score, "(bs fs) -> bs fs", bs=_bs, fs=false_len + 1)
-                answer = torch.zeros(_bs).to(score).long()
-                loss = loss_fct(score, answer)
-                # calculate x.grad
-                loss.backward()
-                
-            # Get gradient
-            img_delta_grad = img_delta.grad.clone().detach().float()
-            # Get inf_norm gradient (It will be used to normalize the img_delta_grad)
-            denorm = torch.norm(img_delta_grad.view(img_delta_grad.size(0), -1), dim=1, p=float("inf")).view(-1, 1, 1, 1)
-            # Clip gradient to Lower Bound
-            denorm = torch.clamp(denorm, min=1e-8)
-            # calculate delta_step  with format img_delta
-            img_delta_step = (self.adv_lr_img * img_delta_grad / denorm).to(img_delta)
-            # Add the calculated step to img_delta (The perturbation)
-            img_delta = (img_delta + img_delta_step).detach()
-            # clip the delta if needed
-            if self.adv_max_norm_img > 0:
-                img_delta = torch.clamp(img_delta, -self.adv_max_norm_img, self.adv_max_norm_img).detach()
-            
-        return img_delta
-'''
+        return img_delta       

@@ -1,7 +1,7 @@
 # code in this file is adpated from rpmcruz/autoaugment
 # https://github.com/rpmcruz/autoaugment/blob/master/transformations.py
 import random
-
+import os #
 import PIL, PIL.ImageOps, PIL.ImageEnhance, PIL.ImageDraw
 import numpy as np
 import torch
@@ -256,14 +256,19 @@ class CutoutDefault(object):
 
 class RandAugment:
     def __init__(self, n, m):
-        self.n = n
-        self.m = m  # [0, 30]
+        self.n = n  # Default : 2 ->Apply two type of modification on the image
+        self.m = m  # Default : 9 included in [0, 30]
         self.augment_list = augment_list()
 
     def __call__(self, img):
         ops = random.choices(self.augment_list, k=self.n)
+        name_aug = "_"
         for op, minval, maxval in ops:
+            name_aug = name_aug + op.__name__ + "_"          
             val = (float(self.m) / 30) * float(maxval - minval) + minval
             img = op(img, val)
-
+        ### Save Augmented version
+        #path_save = "/itet-stor/sfurrer/net_scratch/UNITER/ViLT/attacks_analysis/image_augmentation"
+        #img.save(os.path.join(path_save,"image_{}.jpg".format(name_aug)),"JPEG")        
+        ###
         return img

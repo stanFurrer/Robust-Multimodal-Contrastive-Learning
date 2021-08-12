@@ -30,7 +30,7 @@ class BaseDataset(torch.utils.data.Dataset):
         """
         assert len(transform_keys) >= 1
         super().__init__()
-
+        
         self.transforms = keys_to_transforms(transform_keys, size=image_size)
         self.text_column_name = text_column_name
         self.names = names

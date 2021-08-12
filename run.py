@@ -6,21 +6,29 @@ from vilt.config import ex
 from vilt.modules.vilt_module import ViLTransformerSS
 from vilt.datamodules.multitask_datamodule import MTDataModule
 
+# Solve issue : #5486 in huggingface/transformer
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 @ex.automain
 def main(_config):
     _config = copy.deepcopy(_config)
-    print("------------------------------")
-    if _config["image_attack"] :
-        print("Hyper parameter for pgd")
-        print("adv_lr_img :",_config["adv_lr_img"])
-        print("adv_max_norm_img :",_config["adv_max_norm_img"])
-    if _config["text_attack"] :
-        print("\nHyper parameter for Geometric")
-        print("n_candidates :",_config["n_candidates"])
-        print("max_loops :",_config["max_loops"])
-    print("------------------------------\n")
-    
+    print("\n------------------------------")
+    print("The Multimodal is set to ", _config["Multimodal"])
+    if _config["augmentation"] : 
+        print("Doing augmentation") 
+        print("Text_view set to ", _config["text_view"])
+        print("Image_view set to ",_config["image_view"] )
+    else : 
+        if _config["image_view"] : 
+            print("Hyper parameter for pgd")
+            print("adv_lr_img :",_config["adv_lr_img"])
+            print("adv_max_norm_img :",_config["adv_max_norm_img"])
+        if _config["text_view"] :
+            print("\nHyper parameter for Geometric")
+            print("n_candidates :",_config["n_candidates"])
+            print("max_loops :",_config["max_loops"])        
+    print("------------------------------\n")    
+        
     #os.environ['MASTER_ADDR'] = 'localhost'
     #os.environ['MASTER_PORT'] = '12355'
     
@@ -39,28 +47,24 @@ def main(_config):
         mode="max",
         save_last=True,
     )
-    '''
-    if _config["image_attack"] :
+    test = True
+    if test == True : 
+        # For test Purposes : Other
         logger = pl.loggers.TensorBoardLogger(
             _config["log_dir"],
-            name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}_lr{_config["adv_lr_img"]}_norm{_config["adv_max_norm_img"]}',
-        )
-    elif _config["text_attack"] :
+            name= "Other_new"
+            #name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}',
+        )         
+    else : 
+        name    = "Finetuning_New_Moco" # BarlowTwins_New
+        version = "NLVR2_aug" 
+        # For experimence Purposes 
         logger = pl.loggers.TensorBoardLogger(
             _config["log_dir"],
-            name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}_candidate{_config["n_candidates"]}_loop{_config["max_loops"]}',
-        )
-    else :
-        logger = pl.loggers.TensorBoardLogger(
-            _config["log_dir"],
-            name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}',
-        )
-    '''
-    logger = pl.loggers.TensorBoardLogger(
-        _config["log_dir"],
-        name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}',
-    )
-        
+            version=version,
+            name= name
+        )          
+     
     lr_callback = pl.callbacks.LearningRateMonitor(logging_interval="step")
     # callbacks = [checkpoint_callback, lr_callback]
     callbacks = [lr_callback]
@@ -74,7 +78,7 @@ def main(_config):
     grad_steps = _config["batch_size"] // (
         _config["per_gpu_batchsize"] * num_gpus * _config["num_nodes"]
     )
-
+    print("This is grad_steps",grad_steps)
     max_steps = _config["max_steps"] if _config["max_steps"] is not None else None
 
     trainer = pl.Trainer(

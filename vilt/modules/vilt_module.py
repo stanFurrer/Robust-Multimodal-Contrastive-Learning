@@ -1,22 +1,22 @@
 #### New
-from attack.greedy_attack_vilt import GreedyAttack_moco, GreedyAttack_barlowtwins, GreedyAttack_nlvr2, GreedyAttack_irtr
+from attack.greedy_attack_vilt import GreedyAttack_moco, GreedyAttack_barlowtwins, GreedyAttack_nlvr2,GreedyAttack_irtr
 from attack.pgd_attack_vilt import PGDAttack_moco, PGDAttack_bartlowtwins, PGDAttack_nlvr2, PGDAttack_irtr
-
-import os
-import time
+from augmentation.image_augmentation import ImageAugmentation
+from augmentation.text_augmentation import TextAugmentation
+import os #
+import time#
 from copy import deepcopy
-from collections import OrderedDict
-from transformers import BertTokenizer
+from collections import OrderedDict #
+from transformers import BertTokenizer#
+from Geometric_attack.greedy_attack_vilt_cross_entropy import GreedyAttack_cross_entropy #
 ####
 
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 import vilt.modules.vision_transformer as vit
-from vilt.modules import heads, objectives, vilt_utils
-
 from transformers.models.bert.modeling_bert import BertConfig, BertEmbeddings
-
+from vilt.modules import heads, objectives, vilt_utils
 
 class ViLTransformerSS(pl.LightningModule):
     def __init__(self, config):
@@ -63,8 +63,12 @@ class ViLTransformerSS(pl.LightningModule):
         if config["loss_names"]["mpp"] > 0:
             self.mpp_score = heads.MPPHead(bert_config)
             self.mpp_score.apply(objectives.init_weights)
-        
+
         if config["loss_names"]["moco"] > 0:
+            self.tsne_vizualisation = config["TSNE_vizualisation"]
+            self.img_save_path = config["img_save_path"]
+            self.cosine = nn.CosineSimilarity(dim=1, eps=1e-6)
+            self.multimodal = config["Multimodal"]
             self.per_step_bs = config["num_gpus"] * config["num_nodes"] * config["per_gpu_batchsize"]
             self.k_text_embeddings = BertEmbeddings(bert_config)
             self._shadow_layer(self.text_embeddings, self.k_text_embeddings)
@@ -80,36 +84,60 @@ class ViLTransformerSS(pl.LightningModule):
             self._shadow_layer(self.moco_head, self.k_moco_head)
             self.momentum = config["momentum"]
             self.temperature = config["temperature"]
-            self.text_attack = config["text_attack"]
-            self.image_attack = config["image_attack"]
+            self.text_view = config["text_view"]
+            self.augmentation= config["augmentation"]
+            self.image_view = config["image_view"]
             self.num_negative = config["num_negative"]
-            self.register_buffer("text_queue", torch.zeros(128, self.num_negative))
-            # self.text_queue = nn.functional.normalize(self.text_queue, dim=0)
-            self.register_buffer("text_queue_ptr", torch.zeros(1, dtype=torch.long))
-            self.register_buffer("image_queue", torch.zeros(128, self.num_negative))
-            # self.image_queue = nn.functional.normalize(self.image_queue, dim=0)
-            self.register_buffer("image_queue_ptr", torch.zeros(1, dtype=torch.long))
             
-            if self.text_attack:
-                print("----Loading greedy attack ----")
-                self.greedy_attacker = GreedyAttack_moco(config)
-                print("----Greedy attack Loaded ----")
-            if self.image_attack:
-                self.pgd_attacker = PGDAttack_moco(config)
+            """ OLD
+            self.register_buffer("text_queue", torch.randn(128, self.num_negative))
+            #self.text_queue = nn.functional.normalize(self.text_queue, dim=0)
+            self.register_buffer("text_queue_ptr", torch.zeros(1, dtype=torch.long))
+            self.register_buffer("image_queue", torch.randn(128, self.num_negative))
+            #self.image_queue = nn.functional.normalize(self.image_queue, dim=0)
+            self.register_buffer("image_queue_ptr", torch.zeros(1, dtype=torch.long))
+            """
+            self.register_buffer("proj_queue", torch.randn(128, self.num_negative))
+            self.register_buffer("proj_queue_ptr", torch.zeros(1, dtype=torch.long))
+            #self.proj_queue = nn.functional.normalize(self.proj_queue, dim=0)
+            
+            if self.augmentation : 
+                if self.text_view:
+                    self.text_augmentation = TextAugmentation(config)
+                if self.image_view:   
+                    self.image_augmentation = ImageAugmentation(config)
+            else : 
+                if self.text_view:
+                    print("----Loading greedy attack ----")
+                    self.greedy_attacker = GreedyAttack_moco(config)
+                    print("----Greedy attack Loaded ----")
+                if self.image_view:
+                    self.pgd_attacker = PGDAttack_moco(config)          
                
         if config["loss_names"]["barlowtwins"] > 0:
+            self.tsne_vizualisation = config["TSNE_vizualisation"]
+            self.img_save_path = config["img_save_path"]
+            self.cosine = nn.CosineSimilarity(dim=1, eps=1e-6)    
+            self.multimodal = config["Multimodal"]
             self.per_step_bs = config["num_gpus"] * config["num_nodes"] * config["per_gpu_batchsize"]
-            self.barlowtwins_head = heads.BarlowTwinsHead(config["hidden_size"], [2048, 2048], 2048)
-            self.text_attack = config["text_attack"]
-            self.image_attack = config["image_attack"]
+            self.barlowtwins_head = heads.BarlowTwinsHead(config["hidden_size"], [8192, 8192], 8192)
+            self.text_view = config["text_view"]
+            self.image_view = config["image_view"]
             self.adv_lr = config["adv_lr"]
             self.loss_weight = 0.001
-            if self.text_attack:
-                print("----Loading greedy attack ----")
-                self.greedy_attacker = GreedyAttack_barlowtwins(config)
-                print("----Greedy attack Loaded ----")
-            if self.image_attack:
-                self.pgd_attacker = PGDAttack_bartlowtwins(config)
+            self.augmentation= config["augmentation"]
+            if self.augmentation : 
+                if self.text_view:
+                    self.text_augmentation = TextAugmentation(config)
+                if self.image_view:   
+                    self.image_augmentation = ImageAugmentation(config)                    
+            else :             
+                if self.text_view:
+                    print("----Loading greedy attack ----")
+                    self.greedy_attacker = GreedyAttack_barlowtwins(config)
+                    print("----Greedy attack Loaded ----")
+                if self.image_view:
+                    self.pgd_attacker = PGDAttack_bartlowtwins(config)
         # ===================== Downstream ===================== #
         if (
             self.hparams.config["load_path"] != ""
@@ -161,16 +189,37 @@ class ViLTransformerSS(pl.LightningModule):
             self.token_type_embeddings.weight.data[1, :] = emb_data[1, :]
             self.token_type_embeddings.weight.data[2, :] = emb_data[1, :]
             #param attacks
-            self.image_attack = config["image_attack"]
-            self.text_attack = config["text_attack"]
-            if config["text_attack"]:
+            self.image_view = config["image_view"]
+            self.text_view  = config["text_view"]
+            if config["text_view"]:
                 print("----Loading GreedyAttack_cross_entropy ----")
                 self.greedy_attacker = GreedyAttack_nlvr2(config)
                 print("----Greedy GreedyAttack_cross_entropy DONE ----")
-            if config["image_attack"]:
+            if config["image_view"]:
                 self.attack_idx = config["attack_idx"]
-                self.pgd_attacker = PGDAttack_nlvr2(config)
-
+                self.pgd_attacker = PGDAttack_nlvr2(config)            
+            
+            """
+            if config["text_view"] : 
+                self.n_candidates = config["n_candidates"]
+                self.max_loops = config["max_loops"]     
+                self.sim_thred = config["sim_thred"]      
+                self.cos_sim = config["cos_sim"]     
+                self.synonym = config["synonym"]    
+                self.embedding_path = config["embedding_path"] 
+                self.sim_path = config["sim_path"]
+                self.tokenizer= BertTokenizer.from_pretrained('bert-base-uncased')
+                print("----Loading GreedyAttack_cross_entropy ----")
+                self.greedy_attacker = GreedyAttack_cross_entropy(args = config,
+                                            n_candidates = self.n_candidates,
+                                            max_loops    = self.max_loops,    
+                                            tokenizer    = self.tokenizer)
+                print("----Greedy GreedyAttack_cross_entropy DONE ----")               
+            if config["image_view"] : 
+                self.adv_steps_img = config["adv_steps_img"]  
+                self.adv_lr_img = config["adv_lr_img"]     
+                self.adv_max_norm_img = config["adv_max_norm_img"] 
+            """
         if self.hparams.config["loss_names"]["irtr"] > 0:
             self.rank_output = nn.Linear(hs, 1)
             self.rank_output.weight.data = self.itm_score.fc.weight.data[1:, :]
@@ -178,36 +227,32 @@ class ViLTransformerSS(pl.LightningModule):
             self.margin = 0.2
             for p in self.itm_score.parameters():
                 p.requires_grad = False
-                
+
         if self.hparams.config["loss_names"]["irtr_attacked"] > 0:
             self.moco_head = heads.MOCOHead(config["hidden_size"], config["hidden_size"], 128)
-            self.image_attack = config["image_attack"]
-            self.text_attack = config["text_attack"]
-            if config["text_attack"]:
+            self.image_view = config["image_view"]
+            self.text_view = config["text_view"]
+            if config["text_view"]:
                 print("----Loading GreedyAttack_cross_entropy ----")
                 self.greedy_attacker = GreedyAttack_irtr(config)
                 print("----Greedy GreedyAttack_cross_entropy DONE ----")
-            if config["image_attack"]:
-                self.pgd_attacker = PGDAttack_irtr(config)
-
+            if config["image_view"]:
+                self.pgd_attacker = PGDAttack_irtr(config)        
+       
         vilt_utils.set_metrics(self)
-        self.current_tasks = list()
-
+        self.current_tasks = list()        
         # ===================== load downstream (test_only) ======================
 
         if self.hparams.config["load_path"] != "" and self.hparams.config["test_only"]:
             ckpt = torch.load(self.hparams.config["load_path"], map_location="cpu")
             state_dict = ckpt["state_dict"]
             self.load_state_dict(state_dict, strict=False)
-
+                     
     def _shadow_layer(self, q_layer, k_layer):
         for param_q, param_k in zip(q_layer.parameters(), k_layer.parameters()):
             param_k.data.copy_(param_q.data)
             param_k.requires_grad = False
         
-    # def get_input_embeddings(self):
-    #     return self.text_embeddings.word_embeddings
-    
     def infer(
         self,
         batch,
@@ -285,7 +330,7 @@ class ViLTransformerSS(pl.LightningModule):
         }
 
         return ret
-
+    
     def infer_k(
         self,
         batch,
@@ -338,6 +383,7 @@ class ViLTransformerSS(pl.LightningModule):
 
         x = co_embeds
 
+
         for i, blk in enumerate(self.k_transformer.blocks):
             x, _attn = blk(x, mask=co_masks)
 
@@ -346,16 +392,16 @@ class ViLTransformerSS(pl.LightningModule):
             x[:, : text_embeds.shape[1]],
             x[:, text_embeds.shape[1] :],
         )
-        # cls_feats = self.pooler(x)
+        cls_feats = self.pooler(x)
 
         ret = {
             "text_feats": text_feats,
             "image_feats": image_feats,
-            # "cls_feats": cls_feats,
-            # "raw_cls_feats": x[:, 0],
-            # "image_labels": image_labels,
+            "cls_feats": cls_feats,
+            "raw_cls_feats": x[:, 0],
+            #"image_labels": image_labels,
             "image_masks": image_masks,
-            # "text_labels": text_labels,
+            #"text_labels": text_labels,
             "text_ids": text_ids,
             "text_masks": text_masks,
             "patch_index": patch_index,
@@ -363,7 +409,7 @@ class ViLTransformerSS(pl.LightningModule):
 
         return ret
     
-    def forward(self, batch):
+    def forward(self, batch,batch_idx):
         ret = dict()
         if len(self.current_tasks) == 0:
             ret.update(self.infer(batch))
@@ -396,23 +442,24 @@ class ViLTransformerSS(pl.LightningModule):
         # Image Retrieval and Text Retrieval
         if "irtr" in self.current_tasks:
             ret.update(objectives.compute_irtr(self, batch))
-
+        
         # Image Retrieval and Text Retrieval
-        # if "irtr_attacked" in self.current_tasks:
-        #     ret.update(objectives.compute_irtr_attacked(self, batch))
-
+        if "irtr_attacked" in self.current_tasks:
+            ret.update(objectives.compute_irtr_attacked(self, batch))
+            
         # MoCo Contrasive framework
         if "moco" in self.current_tasks:
-            ret.update(objectives.compute_moco_contrastive(self, batch))
+            ret.update(objectives.compute_moco_contrastive(self, batch,batch_idx))
         
         if "barlowtwins" in self.current_tasks:
-            ret.update(objectives.compute_barlowtwins_contrastive(self, batch))
+            ret.update(objectives.compute_barlowtwins_contrastive(self, batch,batch_idx))
             
         return ret
 
+
     def training_step(self, batch, batch_idx):
         vilt_utils.set_task(self)
-        output = self(batch)
+        output = self(batch,batch_idx)
         total_loss = sum([v for k, v in output.items() if "loss" in k])
 
         return total_loss
@@ -422,16 +469,16 @@ class ViLTransformerSS(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         vilt_utils.set_task(self)
-        output = self(batch)
+        output = self(batch,batch_idx)
 
     def validation_epoch_end(self, outs):
         vilt_utils.epoch_wrapup(self)
 
     def test_step(self, batch, batch_idx):
         # For adversarial
-        # torch.set_grad_enabled(True)
+        #torch.set_grad_enabled(True)
         vilt_utils.set_task(self)
-        output = self(batch)
+        output = self(batch,batch_idx)
         ret = dict()
 
         if self.hparams.config["loss_names"]["vqa"] > 0:
@@ -447,4 +494,4 @@ class ViLTransformerSS(pl.LightningModule):
         vilt_utils.epoch_wrapup(self)
 
     def configure_optimizers(self):
-        return vilt_utils.set_schedule(self)
+        return vilt_utils.set_schedule(self)    

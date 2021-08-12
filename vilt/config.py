@@ -14,7 +14,7 @@ def _loss_names(d):
         "nlvr2": 0,
         "irtr": 0,
         "irtr_attacked": 0,
-        "nlvr2_attacked": 0
+        "nlvr2_attacked":0
     }
     ret.update(d)
     return ret
@@ -69,19 +69,25 @@ def config():
     get_recall_metric = False
 
     # Contrastive setting
+    Multimodal = False
     num_negative = 0
-    text_attack = False
-    image_attack = False
+    text_view = False
+    image_view = False
+    augmentation = False
+    num_beams = 20
+    num_return_sequences = 20    
+    type_txt_augm = ["PEGASUS","EDA"] # EDA, PEGASUS
     momentum = 1.0
     temperature = 1.0
     adv_lr = 0.0051
-    
+    TSNE_vizualisation = False
+    img_save_path = './attacks_analysis/TSNE'
     # attacks
     #PGD
     adv_steps_img = 5
     adv_lr_img = 0.5
     adv_max_norm_img = 0.1
-    attack_idx = [False, False]
+    attack_idx = [False, False]    
     #Geometric
     n_candidates = 10
     max_loops = 10
@@ -120,25 +126,29 @@ def env_dandelin():
 @ex.named_config
 def task_moco():
     exp_name = "moco"
-    num_workers = 4
     # datasets = ["coco", "vg", "sbu", "gcc"]
     datasets = ["coco"]
+    Multimodal = True #-------------------------
     num_negative = 65536
     momentum = 0.999
     temperature = 0.07
-    text_attack = False
-    image_attack = False
+    augmentation = False #-------------------------
+    num_beams = 20
+    num_return_sequences = 20
+    text_view = False #-------------------------
+    image_view = False #-------------------------
+    type_txt_augm = ["PEGASUS","EDA"] # EDA, PEGASUS    
     loss_names = _loss_names({"moco": 1})
     # batch_size = 4096
     batch_size = 128
-    max_epoch = 1
+    max_epoch = 3
     max_image_len = 200
     test_only = False
     # Attacks parameters
     # PGD
     adv_steps_img = 5
     adv_lr_img = 0.7
-    adv_max_norm_img = 0.0
+    adv_max_norm_img = 0.0 #0.0
     #Geometric
     n_candidates = 10
     max_loops = 10
@@ -147,36 +157,42 @@ def task_moco():
     synonym = "cos_sim"
     embedding_path = './attack/counter-fitted-vectors.txt'
     sim_path = './attack/cos_sim_counter_fitting.npy'
-
+    TSNE_vizualisation = False
+    img_save_path = './attacks_analysis/TSNE'
 
 @ex.named_config
 def task_barlowtwins():
     exp_name = "barlowtwins"
-    num_workers = 4
     # datasets = ["coco", "vg", "sbu", "gcc"]
     datasets = ["coco"]
-    text_attack = True
-    image_attack = True
+    Multimodal = True #-------------------------
+    augmentation = False #-------------------------
+    num_beams = 20
+    num_return_sequences = 20
+    text_view = False #-------------------------
+    image_view = False #-------------------------
+    type_txt_augm = ["PEGASUS","EDA"] # EDA, PEGASUS      
     loss_names = _loss_names({"barlowtwins": 1})
     adv_lr = 0.0051
-    batch_size = 64
-    max_epoch = 10
+    batch_size = 128 #--------------------
+    max_epoch = 3
     max_image_len = 200
     test_only = False
     # Attacks parameters
     # PGD
-    adv_steps_img = 3
-    adv_lr_img = 0.5
-    adv_max_norm_img = 0.1
+    adv_steps_img = 5
+    adv_lr_img = 0.7
+    adv_max_norm_img = 0.0
     # Geometric
     n_candidates = 10
-    max_loops = 4
+    max_loops = 10
     sim_thred = 0.5
     cos_sim = True
     synonym = "cos_sim"
     embedding_path = './attack/counter-fitted-vectors.txt'
     sim_path = './attack/cos_sim_counter_fitting.npy'
-
+    TSNE_vizualisation = False
+    img_save_path = './attacks_analysis/TSNE'
 
 @ex.named_config
 def task_mlm_itm():
@@ -242,16 +258,16 @@ def task_finetune_nlvr2_randaug_attacked():
     datasets = ["nlvr2"]
     train_transform_keys = ["pixelbert_randaug"]
     loss_names = _loss_names({"nlvr2_attacked": 1})
-    batch_size = 16
+    batch_size = 128
     max_epoch = 10
     max_steps = None
     warmup_steps = 0.1
     draw_false_image = 0
     learning_rate = 1e-4
-    test_only = True
+    test_only = False
     # Attacks parameters
-    text_attack = True
-    image_attack = True
+    text_view = True
+    image_view = True
     # PGD
     adv_steps_img = 5
     adv_lr_img = 0.7
@@ -259,7 +275,7 @@ def task_finetune_nlvr2_randaug_attacked():
     attack_idx = [False, True]
     #Geometric
     n_candidates = 10
-    max_loops = 4
+    max_loops = 10
     sim_thred = 0.5
     cos_sim = True
     synonym = "cos_sim"
@@ -325,7 +341,6 @@ def task_finetune_irtr_coco_randaug():
     draw_false_text = 15
     learning_rate = 1e-4
 
-
 @ex.named_config
 def task_finetune_irtr_coco_randaug_attacked():
     exp_name = "finetune_irtr_coco_randaug_attacked"
@@ -341,8 +356,8 @@ def task_finetune_irtr_coco_randaug_attacked():
     learning_rate = 1e-4
     test_only = True
     # Attacks parameters
-    text_attack = False
-    image_attack = False
+    text_view = False
+    image_view = False
     # PGD
     adv_steps_img = 5
     adv_lr_img = 0.7
@@ -356,7 +371,7 @@ def task_finetune_irtr_coco_randaug_attacked():
     synonym = "cos_sim"
     embedding_path = './attack/counter-fitted-vectors.txt'
     sim_path = './attack/cos_sim_counter_fitting.npy'
-
+       
 @ex.named_config
 def task_finetune_irtr_f30k():
     exp_name = "finetune_irtr_f30k"
@@ -388,11 +403,7 @@ def task_finetune_irtr_f30k_randaug():
 
 # Named configs for "etc" which are orthogonal to "env" and "task", need to be added at the end
 
-@ex.named_config
-def step4k():
-    max_epoch = 2
-    max_steps = 4000
-    
+
 @ex.named_config
 def step25k():
     max_epoch = 100
@@ -424,3 +435,4 @@ def vit32_base():
     hidden_size = 768
     num_heads = 12
     num_layers = 12
+

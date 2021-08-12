@@ -18,8 +18,42 @@ class Pooler(nn.Module):
         pooled_output = self.dense(first_token_tensor)
         pooled_output = self.activation(pooled_output)
         return pooled_output
-
-
+    
+"""
+class BarlowTwinsHead(nn.Module):
+    def __init__(self, input_dim, inner_dim, output_dim):
+        super().__init__()
+        layer_dim = [input_dim] + inner_dim + [output_dim]
+        self.projector = nn.Sequential(OrderedDict([
+            ('linear1', nn.Linear(layer_dim[0], layer_dim[1], bias=False)),
+            ('BatchNorm', nn.BatchNorm1d(layer_dim[1])),
+            ('ReLu', nn.ReLU(inplace=True)),
+            ('linear2', nn.Linear(layer_dim[1], layer_dim[2], bias=False)),
+            ('BatchNorm', nn.BatchNorm1d(layer_dim[2])),
+            ('ReLu', nn.ReLU(inplace=True)),
+            ('linear3', nn.Linear(layer_dim[2], layer_dim[3], bias=False)),
+        ]))
+        '''
+        self.txt_projector = nn.Sequential(OrderedDict([
+            ('linear1', nn.Linear(layer_dim[0], layer_dim[1], bias=False)),
+            ('BatchNorm', nn.BatchNorm1d(layer_dim[1])),
+            ('ReLu', nn.ReLU(inplace=True)),
+            ('linear2', nn.Linear(layer_dim[1], layer_dim[2], bias=False)),
+            ('BatchNorm', nn.BatchNorm1d(layer_dim[2])),
+            ('ReLu', nn.ReLU(inplace=True)),
+            ('linear3', nn.Linear(layer_dim[2], layer_dim[3], bias=False)),
+        ]))
+        '''
+        self.norm = nn.BatchNorm1d(layer_dim[-1], affine=False)
+    
+    def forward(self, y1, y2):
+        y1 = y1[:, 0]
+        y2 = y2[:, 0]
+        z1 = self.projector(y1)
+        z2 = self.projector(y2)
+        return self.norm(z1), self.norm(z2)
+"""
+""" OLD
 class BarlowTwinsHead(nn.Module):
     def __init__(self, input_dim, inner_dim, output_dim):
         super().__init__()
@@ -44,14 +78,71 @@ class BarlowTwinsHead(nn.Module):
         )
         self.norm = nn.BatchNorm1d(layer_dim[-1], affine=False)
     
-    def forward(self, y1, y2):
+    def forward(self, y1, y2): # Img, Text
         y1 = y1[:, 0]
         y2 = y2[:, 0]
         z1 = self.img_projector(y1)
         z2 = self.txt_projector(y2)
         return self.norm(z1), self.norm(z2)
+"""
+class BarlowTwinsHead(nn.Module):
+    def __init__(self, input_dim, inner_dim, output_dim):
+        super().__init__()
+        layer_dim = [input_dim] + inner_dim + [output_dim]
+        self.projector = nn.Sequential(
+            nn.Linear(layer_dim[0], layer_dim[1], bias=False),
+            nn.BatchNorm1d(layer_dim[1]),
+            nn.ReLU(inplace=True),
+            nn.Linear(layer_dim[1], layer_dim[2], bias=False),
+            nn.BatchNorm1d(layer_dim[2]),
+            nn.ReLU(inplace=True),
+            nn.Linear(layer_dim[2], layer_dim[3], bias=False),
+        )
+        self.norm = nn.BatchNorm1d(layer_dim[-1], affine=False)
     
-    
+    def forward(self, cls_img_txt): # Img, Text
+        
+        z2 = self.projector(cls_img_txt)
+        return self.norm(z2)
+"""    
+class MOCOHead(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super().__init__()
+        self.output_dim = output_dim
+        self.input_dim  = input_dim
+        self.hidden_dim = hidden_dim
+        self.model  = nn.Sequential(OrderedDict([
+            ('linear1', nn.Linear(self.input_dim, self.hidden_dim)),
+            ('LayerNorm',   nn.LayerNorm(self.hidden_dim)),
+            ('LayerNorm',   nn.ReLU()),
+            ('linear2', nn.Linear(self.hidden_dim, self.output_dim, bias=False))
+        ]))
+
+    def forward(self, img, txt):
+        first_image_tensor = img[:, 0]
+        first_text_tensor = txt[:, 0]
+        img = self.model(first_image_tensor)
+        txt = self.model(first_text_tensor)
+        return img, txt    
+"""    
+
+class MOCOHead(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super().__init__()
+        self.output_dim = output_dim
+        self.input_dim  = input_dim
+        self.hidden_dim = hidden_dim
+        self.projector  = nn.Sequential(
+            nn.Linear(self.input_dim, self.hidden_dim),
+            nn.LayerNorm(self.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(self.hidden_dim, self.output_dim, bias=False)
+        )
+    def forward(self, cls_img_txt):
+        x = self.projector(cls_img_txt)
+        return x  
+
+"""
 class MOCOHead(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim):
         super().__init__()
@@ -76,8 +167,8 @@ class MOCOHead(nn.Module):
         first_text_tensor  = txt[:, 0]
         img = self.img_model(first_image_tensor)
         txt = self.txt_model(first_text_tensor)
-        return img, txt    
-
+        return img, txt       
+"""
 
 class ITMHead(nn.Module):
     def __init__(self, hidden_size):
