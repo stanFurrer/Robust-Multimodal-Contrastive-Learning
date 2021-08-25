@@ -47,7 +47,7 @@ def main(_config):
         mode="max",
         save_last=True,
     )
-    test = True
+    test = False
     if test == True : 
         # For test Purposes : Other
         logger = pl.loggers.TensorBoardLogger(
@@ -55,19 +55,15 @@ def main(_config):
             name= "Other_new"
             #name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}',
         )         
-    else : 
-        name    = "Finetuning_New_Moco" # BarlowTwins_New
-        version = "NLVR2_aug" 
-        # For experimence Purposes 
+    else :
         logger = pl.loggers.TensorBoardLogger(
             _config["log_dir"],
-            version=version,
-            name= name
-        )          
+            name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}',
+        )
      
     lr_callback = pl.callbacks.LearningRateMonitor(logging_interval="step")
-    # callbacks = [checkpoint_callback, lr_callback]
-    callbacks = [lr_callback]
+    callbacks = [checkpoint_callback, lr_callback]
+    # callbacks = [lr_callback]
 
     num_gpus = (
         _config["num_gpus"]

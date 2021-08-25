@@ -4,11 +4,13 @@ from attack.pgd_attack_vilt import PGDAttack_moco, PGDAttack_bartlowtwins, PGDAt
 from augmentation.image_augmentation import ImageAugmentation
 from augmentation.text_augmentation import TextAugmentation
 import os #
+import sys
+import psutil
 import time#
 from copy import deepcopy
 from collections import OrderedDict #
 from transformers import BertTokenizer#
-from Geometric_attack.greedy_attack_vilt_cross_entropy import GreedyAttack_cross_entropy #
+# from Geometric_attack.greedy_attack_vilt_cross_entropy import GreedyAttack_cross_entropy #
 ####
 
 import torch
@@ -112,8 +114,9 @@ class ViLTransformerSS(pl.LightningModule):
                     self.greedy_attacker = GreedyAttack_moco(config)
                     print("----Greedy attack Loaded ----")
                 if self.image_view:
-                    self.pgd_attacker = PGDAttack_moco(config)          
-               
+                    self.pgd_attacker = PGDAttack_moco(config)
+            print("1", psutil.virtual_memory())
+
         if config["loss_names"]["barlowtwins"] > 0:
             self.tsne_vizualisation = config["TSNE_vizualisation"]
             self.img_save_path = config["img_save_path"]
@@ -468,6 +471,7 @@ class ViLTransformerSS(pl.LightningModule):
         vilt_utils.epoch_wrapup(self)
 
     def validation_step(self, batch, batch_idx):
+        print("2", psutil.virtual_memory())
         vilt_utils.set_task(self)
         output = self(batch,batch_idx)
 

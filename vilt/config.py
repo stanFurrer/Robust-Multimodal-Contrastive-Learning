@@ -110,7 +110,7 @@ def config():
     num_gpus = 1
     num_nodes = 1
     load_path = ""
-    num_workers = 8
+    num_workers = 4
     precision = 16
 
 # Named configs for "environment" which define gpus and nodes, and paths
@@ -150,7 +150,7 @@ def task_moco():
     adv_lr_img = 0.7
     adv_max_norm_img = 0.0 #0.0
     #Geometric
-    n_candidates = 10
+    n_candidates = 5
     max_loops = 10
     sim_thred = 0.5
     cos_sim = True
@@ -267,7 +267,7 @@ def task_finetune_nlvr2_randaug_attacked():
     test_only = False
     # Attacks parameters
     text_view = True
-    image_view = True
+    image_view = False
     # PGD
     adv_steps_img = 5
     adv_lr_img = 0.7

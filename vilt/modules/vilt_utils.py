@@ -171,15 +171,15 @@ def epoch_wrapup(pl_module):
                 getattr(pl_module, f"train_{loss_name}_loss").reset()
                 
                 if pl_module.image_view:
-                    value = getattr(pl_module, f"train_{loss_name}_delta").compute()
-                    pl_module.log(f"{loss_name}/train/img_delta_epoch", value)
+                    t = getattr(pl_module, f"train_{loss_name}_delta").compute()
+                    pl_module.log(f"{loss_name}/train/img_delta_epoch", t)
                     getattr(pl_module, f"train_{loss_name}_delta").reset()
                 if pl_module.text_view:
-                    value = getattr(pl_module, f"train_{loss_name}_num_changes").compute()
-                    pl_module.log(f"{loss_name}/train/txt_num_changes", value)
+                    t = getattr(pl_module, f"train_{loss_name}_num_changes").compute()
+                    pl_module.log(f"{loss_name}/train/txt_num_changes", t)
                     getattr(pl_module, f"train_{loss_name}_num_changes").reset()
-                    value = getattr(pl_module, f"train_{loss_name}_change_rate").compute()
-                    pl_module.log(f"{loss_name}/train/txt_change_rate", value)
+                    t = getattr(pl_module, f"train_{loss_name}_change_rate").compute()
+                    pl_module.log(f"{loss_name}/train/txt_change_rate", t)
                     getattr(pl_module, f"train_{loss_name}_change_rate").reset()                
             else:
                 value = getattr(pl_module, f"dev_nlvr2_original_accuracy").compute()

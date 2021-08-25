@@ -60,8 +60,8 @@ class GreedyAttack:
         self.word2id           = self.tokenizer.get_vocab()              
         self.id2word           = {v: k for k, v in self.word2id.items()}         
         self.cos_sim           = None                                    
-        self.sim_word2id       = None 
-        self.sim_id2word       = None
+        self.sim_word2id       = None
+        # self.sim_id2word       = None
         self.synonym           = config["synonym"]
         self.cos_sim_dict      = None
         if config["cos_sim"]:
@@ -76,16 +76,16 @@ class GreedyAttack:
     def init_matrix(self, embedding_path, sim_path): 
         """Creat cos_sim_dict"""
         embeddings = []
-        self.sim_id2word = {}
+        sim_id2word = {}
         self.sim_word2id = {}
         with open(embedding_path, 'r') as ifile:
             for line in ifile:
                 embedding = [float(num) for num in line.strip().split()[1:]]
                 embeddings.append(embedding)
                 word = line.split()[0]
-                if word not in self.sim_id2word:
-                    self.sim_id2word[len(self.sim_id2word)] = word
-                    self.sim_word2id[word] = len(self.sim_id2word) - 1
+                if word not in sim_id2word:
+                    sim_id2word[len(sim_id2word)] = word
+                    self.sim_word2id[word] = len(sim_id2word) - 1
         if os.path.exists(sim_path):
             self.cos_sim = np.load(sim_path,allow_pickle=True)
         else:
@@ -96,7 +96,7 @@ class GreedyAttack:
             np.save('cos_sim_counter_fitting.npy', self.cos_sim)
         if self.synonym == 'cos_sim':
             self.cos_sim_dict = {}
-            for idx, word in self.sim_id2word.items():
+            for idx, word in sim_id2word.items():
                 candidates = set()
                 indices = torch.topk(torch.tensor(self.cos_sim[idx]), k=self.n_candidates).indices
                 for i in indices:
@@ -105,10 +105,14 @@ class GreedyAttack:
                         break
                     if i == idx:
                         continue
-                    candidates.add(self.sim_id2word[i])
+                    candidates.add(sim_id2word[i])
                 if len(candidates) == 0:
                     candidates = [word]
                 self.cos_sim_dict[idx] = candidates
+        print(sys.getsizeof(sim_id2word))
+        print(sys.getsizeof(self.sim_word2id))
+        print(sys.getsizeof(self.cos_sim_dict))
+        print(sys.getsizeof(self.cos_sim))
 
     def build_mini_vilt(self, pl_module):
         raise NotImplementedError(f"Build_mini_vilt of {self.contrastive_framework} isn't implemented.")

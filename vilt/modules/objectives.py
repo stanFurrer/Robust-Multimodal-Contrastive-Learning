@@ -211,6 +211,24 @@ def compute_moco_contrastive(pl_module, batch,batch_idx):
     _momentum_update_key_layer(pl_module.momentum, pl_module.transformer, pl_module.k_transformer)
     _momentum_update_key_layer(pl_module.momentum, pl_module.moco_head, pl_module.k_moco_head)
 
+    # print(batch.keys())
+    '''
+    if 'image_0' in batch:
+        image0 = batch.pop('image_0')
+        image1 = batch.pop('image_1')
+        batch2 = deepcopy(batch)
+        batch['text'] = batch['text'] + batch['text']
+        batch['table_name'] = batch['table_name'] + batch['table_name']
+        batch['answers'] = batch['answers'] + batch['answers']
+        print(batch)
+        batch['image'] = image0
+        batch2['image'] = image1
+    print(batch.keys())
+    '''
+    # dict_keys(['answers', 'table_name', 'image_1', 'text', 'image_0', 'text_ids', 'text_labels', 'text_ids_mlm',
+    #            'text_labels_mlm', 'text_masks']
+    # ['raw_index', 'img_index', 'cap_index', 'replica', 'image', 'false_image_0', 'text', 'text_ids', 'text_labels',
+    #  'text_ids_mlm', 'text_labels_mlm', 'text_masks']
     with torch.no_grad():
         infer_k = pl_module.infer_k(batch, mask_text=False, mask_image=False)
         projection_cls_feats_k = pl_module.k_moco_head(infer_k["cls_feats"])
@@ -1101,9 +1119,9 @@ def compute_nlvr2_attack(pl_module, batch):
     ori_logits = pl_module.nlvr2_classifier(cls_feats)
     nlvr2_labels = batch["answers"]
     nlvr2_labels = torch.tensor(nlvr2_labels).to(pl_module.device).long()
-    ori_loss = F.cross_entropy(ori_logits, nlvr2_labels)
+    # ori_loss = F.cross_entropy(ori_logits, nlvr2_labels)
     ret["nlvr2_original_logits"] = ori_logits
-    ret["nlvr2_original_loss"] = ori_loss
+    # ret["nlvr2_original_loss"] = ori_loss
     
     attack_batch = None
     if pl_module.image_view:
@@ -1136,7 +1154,7 @@ def compute_nlvr2_attack(pl_module, batch):
         # there may be some bugs, but so far I just want to evaluation
         loss = getattr(pl_module, f"{phase}_nlvr2_attacked_loss")(ret["nlvr2_attacked_loss"])
         acc = getattr(pl_module, f"{phase}_nlvr2_attacked_accuracy")(
-            ret["nlvr2_attacked_logits"], ret["nlvr2_attacked_labels"]
+            ret["nlvr2_attacked_logits"], nlvr2_labels
         )
         pl_module.log(f"nlvr2_attacked/{phase}/loss", loss)
         pl_module.log(f"nlvr2_attacked/{phase}/accuracy", acc)
