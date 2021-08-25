@@ -14,7 +14,7 @@ def main(args):
     vqa_eval = VQAEval(vqa, vqa_res, n=2)
     vqa_eval.evaluate(ques_ids=[x['question_id'] for x in generated])
 
-    print('Validation scores', pad=True)
+    print('Validation scores')
     print('overall accuracy: {}'.format(vqa_eval.accuracy['overall']))
     for ans_type in vqa_eval.accuracy['per_answer_type']:
         print('{} accuracy: {}'.format(ans_type, vqa_eval.accuracy['per_answer_type'][ans_type]))
