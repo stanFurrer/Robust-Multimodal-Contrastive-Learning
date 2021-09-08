@@ -1,11 +1,11 @@
 # Robust Multimodal Contrastive Learning
 
 ## Introduction 
-PyTorch Lightning code for the paper "RMCL: Robust Multimodal Contrastive Learning". Slides of our xxx talk are avialable here.
+PyTorch Lightning code for the paper "RMCL: Robust Multimodal Contrastive Learning". Slides of our talk are avialable here.
 
 ---
 <p align="center">
-  <img align="middle" src="./assets/vilt.png" alt="The main figure"/>
+  <img align="middle" src="./assets/RMCL.png" alt="The main figure" width="800"/>
 </p>
 
 ## Install
@@ -38,4 +38,5 @@ See [`EVAL.md`](EVAL.md)
 If you use any part of this code and pretrained weights for your own purpose, please cite our [paper]
 
 ## Contact for Issues
-
+[Stan Furrer](https://www.linkedin.com/in/stanfurrer/)
+[Zhao Meng](https://zhaopku.github.io/)
