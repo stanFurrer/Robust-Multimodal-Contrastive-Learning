@@ -38,5 +38,5 @@ See [`EVAL.md`](EVAL.md)
 If you use any part of this code and pretrained weights for your own purpose, please cite our [paper]
 
 ## Contact for Issues
-[Stan Furrer](https://www.linkedin.com/in/stanfurrer/)
+[Stan Furrer](https://www.linkedin.com/in/stanfurrer/) <br>
 [Zhao Meng](https://zhaopku.github.io/)
