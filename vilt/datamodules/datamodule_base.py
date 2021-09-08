@@ -36,7 +36,8 @@ class BaseDataModule(LightningDataModule):
         self.draw_false_image = _config["draw_false_image"]
         self.draw_false_text = _config["draw_false_text"]
         self.image_only = _config["image_only"]
-
+        print("\n\n this is train_transform_keys : ", _config["train_transform_keys"])
+        print("\n\n this is train_transform_keys : ", _config["val_transform_keys"])
         self.train_transform_keys = (
             ["default_train"]
             if len(_config["train_transform_keys"]) == 0

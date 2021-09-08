@@ -32,6 +32,11 @@ def main(_config):
         "nlvr2": 0,
         "irtr": 0,
         "arc": 0,
+        "moco": 0,
+        "barlowtwins": 0,
+        "irtr_attacked": 0,
+        "nlvr2_attacked":0,
+        "vqa_attacked" :0
     }
     tokenizer = get_pretrained_tokenizer(_config["tokenizer"])
 

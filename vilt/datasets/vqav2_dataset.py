@@ -5,14 +5,14 @@ class VQAv2Dataset(BaseDataset):
     def __init__(self, *args, split="", **kwargs):
         assert split in ["train", "val", "test"]
         self.split = split
-
         if split == "train":
             names = ["vqav2_train", "vqav2_trainable_val"]
         elif split == "val":
-            names = ["vqav2_rest_val"]
+            #names = ["vqav2_rest_val"]        # For finetuning
+            names = ["vqav2_val"] ###vqav2_val # For validation
         elif split == "test":
-            names = ["vqav2_test"]  # vqav2_test-dev for test-dev
-
+            names = ["vqav2_val"] ### vqav2_val
+        
         super().__init__(
             *args,
             **kwargs,

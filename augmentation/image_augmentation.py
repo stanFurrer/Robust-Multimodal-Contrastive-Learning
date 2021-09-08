@@ -5,8 +5,115 @@ import pyarrow as pa
 import os
 import copy
 from PIL import Image
-from vilt.transforms import keys_to_transforms
 from vilt.config import ex
+from PIL import Image, ImageOps, ImageFilter
+from torch import nn, optim
+import torch
+import torchvision
+import torchvision.transforms as transforms
+import torchvision.transforms as T
+import sys
+
+# To save the image 
+class UnNormalize(object):
+    def __init__(self, mean, std):
+        self.mean = mean
+        self.std = std
+
+    def __call__(self, tensor):
+        """
+        Args:
+            tensor (Tensor): Tensor image of size (C, H, W) to be normalized.
+        Returns:
+            Tensor: Normalized image.
+        """
+        for t, m, s in zip(tensor, self.mean, self.std):
+            t.mul_(s).add_(m)
+            # The normalize code -> t.sub_(m).div_(s)
+        return tensor
+
+# To save the image 
+def show(imgs_clean,imgs_augm):
+    """Open an tensor and save it in PNG"""
+    save_exemple_augm = "/itet-stor/sfurrer/net_scratch/UNITER/ViLT/attacks_analysis_vilt/AUGM/exemple"
+    unorm = UnNormalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  
+
+    imgs_clean = imgs_clean.to('cpu')
+    imgs_augm= imgs_augm.to('cpu') 
+    for i,(img_clean,img_augm) in enumerate(zip(imgs_clean,imgs_augm)):     
+        img_clean  = unorm(img_clean)    
+        img_augm = unorm(img_augm)     
+        img_clean = T.ToPILImage()(img_clean)
+        img_augm = T.ToPILImage()(img_augm)   
+        img_clean.save(os.path.join(save_exemple_augm,"img_clean{}.png".format(i)),"PNG",dpi=(1000, 1000))
+        img_augm.save(os.path.join(save_exemple_augm,"img_augm{}.png".format(i)),"PNG",dpi=(1000, 1000))            
+    sys.exit("Stop")
+
+class MinMaxResize:
+    def __init__(self, shorter=800, longer=1333):
+        self.min = shorter
+        self.max = longer
+
+    def __call__(self, x):
+        w, h = x.size
+        scale = self.min / min(w, h)
+        if h < w:
+            newh, neww = self.min, scale * w
+        else:
+            newh, neww = scale * h, self.min
+
+        if max(newh, neww) > self.max:
+            scale = self.max / max(newh, neww)
+            newh = newh * scale
+            neww = neww * scale
+
+        newh, neww = int(newh + 0.5), int(neww + 0.5)
+        newh, neww = newh // 32 * 32, neww // 32 * 32
+
+        return x.resize((neww, newh), resample=Image.BICUBIC)
+
+class GaussianBlur(object):
+    def __init__(self, p):
+        self.p = p
+
+    def __call__(self, img):
+        if random.random() < self.p:
+            sigma = random.random() * 1.9 + 0.1
+            return img.filter(ImageFilter.GaussianBlur(sigma))
+        else:
+            return img
+
+class Solarization(object):
+    def __init__(self, p):
+        self.p = p
+
+    def __call__(self, img):
+        if random.random() < self.p:
+            return ImageOps.solarize(img)
+        else:
+            return img
+        
+class Transform:
+    def __init__(self,size=800):
+        longer = int((1333 / 800) * size)
+        self.transform = transforms.Compose([
+            transforms.RandomResizedCrop(224, interpolation=Image.BICUBIC),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomApply(
+                [transforms.ColorJitter(brightness=0.4, contrast=0.4,
+                                        saturation=0.2, hue=0.1)],
+                p=0.8
+            ),
+            transforms.RandomGrayscale(p=0.2),
+            GaussianBlur(p=1.0),
+            Solarization(p=0.2),
+            MinMaxResize(shorter=size, longer=longer),
+            transforms.ToTensor(),
+            # This is simple maximum entropy normalization performed in ViLT paper. 
+            # It is different than original BarlowTwins
+            transforms.Normalize(mean=[0.5, 0.5, 0.5],
+                                 std=[0.5, 0.5, 0.5])  
+        ])
 
 class ImageAugmentation : 
     """
@@ -15,11 +122,11 @@ class ImageAugmentation :
     def __init__(self, config):
         super().__init__()
         self.data_dir = config["data_root"]
-        self.names = ["coco_caption_karpathy_train"]
+        self.names = ['coco_caption_karpathy_train', 'coco_caption_karpathy_restval']#["coco_caption_karpathy_train"]#coco_caption_karpathy_train
         self.text_column_name ="caption"
         self.image_size = config["image_size"]
         remove_duplicate = True
-        self.transforms = keys_to_transforms(["pixelbert_randaug"], size=self.image_size)
+        self.transforms = Transform(size=self.image_size)
         
         if len(self.names) != 0:
             tables = [
@@ -68,10 +175,10 @@ class ImageAugmentation :
     def get_image(self, index, image_key="image"):
         image = self.get_raw_image(index, image_key=image_key)
         ### Save Original
-        #path_save = "/itet-stor/sfurrer/net_scratch/UNITER/ViLT/attacks_analysis/image_augmentation"
-        #image.save(os.path.join(path_save,"image{}.jpg".format(index)),"JPEG")
+        path_save = "/itet-stor/sfurrer/net_scratch/UNITER/ViLT/attacks_analysis_vilt/AUGM/exemple"
+        image.save(os.path.join(path_save,"img{}.png".format(index)),"PNG")
         ### 
-        image_tensor = [tr(image) for tr in self.transforms]
+        image_tensor = [self.transforms.transform(image)]
         return image_tensor       
 
     def collate(self, images):
@@ -98,4 +205,5 @@ class ImageAugmentation :
         for index in batch["img_index"] :
             images_tensor.append(self.get_image(index))
         new_image = self.collate(images_tensor) 
+        show(batch["image"][0],new_image[0])
         return new_image     

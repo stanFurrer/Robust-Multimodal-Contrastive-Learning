@@ -6,7 +6,7 @@ import os
 
 from PIL import Image
 from vilt.transforms import keys_to_transforms
-
+import torchvision.transforms as T
 
 class BaseDataset(torch.utils.data.Dataset):
     def __init__(
@@ -39,7 +39,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self.draw_false_text = draw_false_text
         self.image_only = image_only
         self.data_dir = data_dir
-
+        print("This is the names used : ",self.names)
         if len(names) != 0:
             tables = [
                 pa.ipc.RecordBatchFileReader(
@@ -97,7 +97,7 @@ class BaseDataset(torch.utils.data.Dataset):
         return Image.open(image_bytes).convert("RGB")
 
     def get_image(self, index, image_key="image"):
-        image = self.get_raw_image(index, image_key=image_key)
+        image = self.get_raw_image(index, image_key=image_key)       
         image_tensor = [tr(image) for tr in self.transforms]
         return {
             "image": image_tensor,
@@ -108,7 +108,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
     def get_false_image(self, rep, image_key="image"):
         random_index = random.randint(0, len(self.index_mapper) - 1)
-        image = self.get_raw_image(random_index, image_key=image_key)
+        image = self.get_raw_image(random_index, image_key=image_key)       
         image_tensor = [tr(image) for tr in self.transforms]
         return {f"false_image_{rep}": image_tensor}
 

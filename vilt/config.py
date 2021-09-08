@@ -14,7 +14,8 @@ def _loss_names(d):
         "nlvr2": 0,
         "irtr": 0,
         "irtr_attacked": 0,
-        "nlvr2_attacked":0
+        "nlvr2_attacked":0,
+        "vqa_attacked" :0
     }
     ret.update(d)
     return ret
@@ -23,6 +24,7 @@ def _loss_names(d):
 @ex.config
 def config():
     exp_name = "vilt"
+    exp_save = "vilt"
     seed = 0
     datasets = ["coco", "vg", "sbu", "gcc"]
     loss_names = _loss_names({"itm": 1, "mlm": 1})
@@ -89,14 +91,14 @@ def config():
     adv_max_norm_img = 0.1
     attack_idx = [False, False]    
     #Geometric
-    n_candidates = 10
+    n_candidates = 5
     max_loops = 10
     sim_thred = 0.5
     cos_sim = True
     synonym = "cos_sim"
     embedding_path = './attack/counter-fitted-vectors.txt'
     sim_path = 'cos_sim_counter_fitting.npy'
-    
+ 
     # PL Trainer Setting
     resume_from = None
     fast_dev_run = False
@@ -110,7 +112,7 @@ def config():
     num_gpus = 1
     num_nodes = 1
     load_path = ""
-    num_workers = 8
+    num_workers = 4 #3 is working
     precision = 16
 
 # Named configs for "environment" which define gpus and nodes, and paths
@@ -126,43 +128,45 @@ def env_dandelin():
 @ex.named_config
 def task_moco():
     exp_name = "moco"
-    # datasets = ["coco", "vg", "sbu", "gcc"]
+    exp_save = "vilt"
     datasets = ["coco"]
+    #datasets = ["coco"]
     Multimodal = True #-------------------------
     num_negative = 65536
     momentum = 0.999
     temperature = 0.07
     augmentation = False #-------------------------
-    num_beams = 20
-    num_return_sequences = 20
+    num_beams = 5
+    num_return_sequences = 5
     text_view = False #-------------------------
     image_view = False #-------------------------
     type_txt_augm = ["PEGASUS","EDA"] # EDA, PEGASUS    
     loss_names = _loss_names({"moco": 1})
     # batch_size = 4096
     batch_size = 128
-    max_epoch = 3
+    max_epoch = 1
     max_image_len = 200
     test_only = False
     # Attacks parameters
     # PGD
     adv_steps_img = 5
-    adv_lr_img = 0.7
-    adv_max_norm_img = 0.0 #0.0
+    adv_lr_img = 0.05
+    adv_max_norm_img = 0.005 #0.0
     #Geometric
-    n_candidates = 10
+    n_candidates = 5
     max_loops = 10
     sim_thred = 0.5
-    cos_sim = True
-    synonym = "cos_sim"
-    embedding_path = './attack/counter-fitted-vectors.txt'
-    sim_path = './attack/cos_sim_counter_fitting.npy'
+    cos_sim = True #false
+    synonym = "cos_sim" #"synonym" #"cos_sim"
+    embedding_path = '../attack/counter-fitted-vectors.txt'
+    sim_path = '../attack/cos_sim_counter_fitting.npy'
     TSNE_vizualisation = False
-    img_save_path = './attacks_analysis/TSNE'
+    img_save_path = '../attacks_analysis/TSNE'
 
 @ex.named_config
 def task_barlowtwins():
     exp_name = "barlowtwins"
+    exp_save = "vilt"
     # datasets = ["coco", "vg", "sbu", "gcc"]
     datasets = ["coco"]
     Multimodal = True #-------------------------
@@ -175,24 +179,24 @@ def task_barlowtwins():
     loss_names = _loss_names({"barlowtwins": 1})
     adv_lr = 0.0051
     batch_size = 128 #--------------------
-    max_epoch = 3
+    max_epoch = 1
     max_image_len = 200
     test_only = False
     # Attacks parameters
     # PGD
     adv_steps_img = 5
-    adv_lr_img = 0.7
-    adv_max_norm_img = 0.0
+    adv_lr_img = 0.05
+    adv_max_norm_img = 0.005
     # Geometric
-    n_candidates = 10
+    n_candidates = 5
     max_loops = 10
     sim_thred = 0.5
     cos_sim = True
     synonym = "cos_sim"
-    embedding_path = './attack/counter-fitted-vectors.txt'
-    sim_path = './attack/cos_sim_counter_fitting.npy'
+    embedding_path = '../attack/counter-fitted-vectors.txt'
+    sim_path = '../attack/cos_sim_counter_fitting.npy'
     TSNE_vizualisation = False
-    img_save_path = './attacks_analysis/TSNE'
+    img_save_path = '../attacks_analysis/TSNE'
 
 @ex.named_config
 def task_mlm_itm():
@@ -238,7 +242,6 @@ def task_finetune_nlvr2():
     draw_false_image = 0
     learning_rate = 1e-4
     
-    
 @ex.named_config
 def task_finetune_nlvr2_randaug():
     exp_name = "finetune_nlvr2_randaug"
@@ -257,6 +260,7 @@ def task_finetune_nlvr2_randaug_attacked():
     exp_name = "finetune_nlvr2_randaug_attacked"
     datasets = ["nlvr2"]
     train_transform_keys = ["pixelbert_randaug"]
+    #train_transform_keys = ["pixelbert_randaug"]
     loss_names = _loss_names({"nlvr2_attacked": 1})
     batch_size = 128
     max_epoch = 10
@@ -266,21 +270,21 @@ def task_finetune_nlvr2_randaug_attacked():
     learning_rate = 1e-4
     test_only = False
     # Attacks parameters
-    text_view = True
-    image_view = True
+    text_view = False
+    image_view = False
     # PGD
-    adv_steps_img = 5
-    adv_lr_img = 0.7
-    adv_max_norm_img = 0.2
-    attack_idx = [False, True]
+    adv_steps_img = 5 
+    adv_lr_img = 0.05
+    adv_max_norm_img = 0.005 #0.0
+    attack_idx = [True, True]
     #Geometric
-    n_candidates = 10
+    n_candidates = 5
     max_loops = 10
     sim_thred = 0.5
     cos_sim = True
     synonym = "cos_sim"
-    embedding_path = './attack/counter-fitted-vectors.txt'
-    sim_path = './attack/cos_sim_counter_fitting.npy'
+    embedding_path = '../attack/counter-fitted-vectors.txt'
+    sim_path = '../attack/cos_sim_counter_fitting.npy'
     
 @ex.named_config
 def task_finetune_vqa():
@@ -312,14 +316,43 @@ def task_finetune_vqa_randaug():
     val_check_interval = 0.1
     lr_mult = 10
 
-
+@ex.named_config
+def task_finetune_vqa_randaug_attacked():
+    exp_name = "finetune_vqa_randaug_attacked"
+    datasets = ["vqa"]
+    train_transform_keys = ["pixelbert_randaug"]
+    loss_names = _loss_names({"vqa_attacked": 1})
+    batch_size = 128
+    max_epoch = 10
+    max_steps = None
+    warmup_steps = 0.1
+    draw_false_image = 0
+    learning_rate = 1e-4
+    val_check_interval = 0.1
+    lr_mult = 10    
+    # Attacks parameters
+    text_view = False
+    image_view = False
+    # PGD
+    adv_steps_img = 5 
+    adv_lr_img = 0.05
+    adv_max_norm_img = 0.005 #0.0
+    #Geometric
+    n_candidates = 5
+    max_loops = 10
+    sim_thred = 0.5
+    cos_sim = True
+    synonym = "cos_sim"
+    embedding_path = '../attack/counter-fitted-vectors.txt'
+    sim_path = '../attack/cos_sim_counter_fitting.npy'    
+    
 @ex.named_config
 def task_finetune_irtr_coco():
     exp_name = "finetune_irtr_coco"
     datasets = ["coco"]
     loss_names = _loss_names({"itm": 0.5, "irtr": 1})
     batch_size = 256
-    max_epoch = 10
+    max_epoch = 128
     max_steps = None
     warmup_steps = 0.1
     get_recall_metric = True
@@ -333,8 +366,8 @@ def task_finetune_irtr_coco_randaug():
     datasets = ["coco"]
     train_transform_keys = ["pixelbert_randaug"]
     loss_names = _loss_names({"itm": 0.5, "irtr": 1})
-    batch_size = 256
-    max_epoch = 10
+    batch_size = 128
+    max_epoch = 2
     max_steps = None
     warmup_steps = 0.1
     get_recall_metric = True
@@ -347,7 +380,7 @@ def task_finetune_irtr_coco_randaug_attacked():
     datasets = ["coco"]
     train_transform_keys = ["pixelbert_randaug"]
     loss_names = _loss_names({"itm": 0.5, "irtr_attacked": 1})
-    batch_size = 256
+    batch_size = 128
     max_epoch = 10
     max_steps = None
     warmup_steps = 0.1
@@ -360,24 +393,24 @@ def task_finetune_irtr_coco_randaug_attacked():
     image_view = False
     # PGD
     adv_steps_img = 5
-    adv_lr_img = 0.7
-    adv_max_norm_img = 0.2
+    adv_lr_img = 0.05
+    adv_max_norm_img = 0.005 #0.0
     attack_idx = [False, True]
     #Geometric
-    n_candidates = 10
+    n_candidates = 5
     max_loops = 4
     sim_thred = 0.5
     cos_sim = True
     synonym = "cos_sim"
-    embedding_path = './attack/counter-fitted-vectors.txt'
-    sim_path = './attack/cos_sim_counter_fitting.npy'
+    embedding_path = '../attack/counter-fitted-vectors.txt'
+    sim_path = '../attack/cos_sim_counter_fitting.npy'
        
 @ex.named_config
 def task_finetune_irtr_f30k():
     exp_name = "finetune_irtr_f30k"
     datasets = ["f30k"]
     loss_names = _loss_names({"itm": 0.5, "irtr": 1})
-    batch_size = 256
+    batch_size = 128
     max_epoch = 10
     max_steps = None
     warmup_steps = 0.1
@@ -392,7 +425,7 @@ def task_finetune_irtr_f30k_randaug():
     datasets = ["f30k"]
     train_transform_keys = ["pixelbert_randaug"]
     loss_names = _loss_names({"itm": 0.5, "irtr": 1})
-    batch_size = 256
+    batch_size = 128
     max_epoch = 10
     max_steps = None
     warmup_steps = 0.1

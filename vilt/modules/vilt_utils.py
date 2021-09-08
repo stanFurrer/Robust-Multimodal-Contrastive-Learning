@@ -18,6 +18,10 @@ def set_metrics(pl_module):
             if k == "vqa":
                 setattr(pl_module, f"{split}_vqa_score", VQAScore())
                 setattr(pl_module, f"{split}_{k}_loss", Scalar())
+            elif k == "vqa_attacked":
+                setattr(pl_module, f"{split}_vqa_attacked_score", VQAScore())
+                setattr(pl_module, f"{split}_vqa_attacked_loss", Scalar())                
+                
             elif k == "nlvr2":
                 if split == "train":
                     setattr(pl_module, f"train_{k}_accuracy", Accuracy())
@@ -45,13 +49,10 @@ def set_metrics(pl_module):
                     setattr(pl_module, f"test_nlvr2_original_accuracy", Accuracy())
                     setattr(pl_module, f"test_nlvr2_original_loss", Scalar())
                     setattr(pl_module, f"test_nlvr2_attacked_accuracy", Accuracy())
-                    setattr(pl_module, f"test_nlvr2_attacked_loss", Scalar())                    
-                    #if pl_module.image_view:
-                    #    setattr(pl_module, f"test_{k}_delta", Scalar())
-                    #if pl_module.text_view:
-                    #    setattr(pl_module, f"test_{k}_num_changes", Scalar())
-                    #    setattr(pl_module, f"test_{k}_change_rate", Scalar())                    
+                    setattr(pl_module, f"test_nlvr2_attacked_loss", Scalar())    
                     
+                    setattr(pl_module, f"test_nlvr2_attacked_change_rate_cross", change_rate())    
+                    setattr(pl_module, f"dev_nlvr2_attacked_change_rate_cross", change_rate())                       
             elif k == "irtr":
                 setattr(pl_module, f"{split}_irtr_loss", Scalar())
             elif k == "irtr_attacked":
@@ -75,10 +76,9 @@ def set_metrics(pl_module):
                     if pl_module.text_view:
                         setattr(pl_module, f"{split}_{k}_loss_invariance_text", Scalar())
                         setattr(pl_module, f"{split}_{k}_loss_redundancy_text", Scalar())          
-                        
-                #setattr(pl_module, f"{split}_{k}_loss", Scalar())
-                #setattr(pl_module, f"{split}_{k}_loss_image", Scalar())
-                #setattr(pl_module, f"{split}_{k}_loss_text", Scalar())
+                    if pl_module.text_view and pl_module.image_view and not pl_module.augmentation:
+                        setattr(pl_module, f"{split}_{k}_loss_invariance_both", Scalar())
+                        setattr(pl_module, f"{split}_{k}_loss_redundancy_both", Scalar())                           
             else:
                 setattr(pl_module, f"{split}_{k}_accuracy", Accuracy())
                 setattr(pl_module, f"{split}_{k}_loss", Scalar())
@@ -93,26 +93,6 @@ def epoch_wrapup(pl_module):
         else:
             (ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10) = compute_irtr_recall(pl_module)
         print((ir_r1, ir_r5, ir_r10, tr_r1, tr_r5, tr_r10), pl_module.global_step)
-        """
-        pl_module.logger.experiment.add_scalar(
-            "recalls/ir_r1", ir_r1, pl_module.global_step
-        )
-        pl_module.logger.experiment.add_scalar(
-            "recalls/ir_r5", ir_r5, pl_module.global_step
-        )
-        pl_module.logger.experiment.add_scalar(
-            "recalls/ir_r10", ir_r10, pl_module.global_step
-        )
-        pl_module.logger.experiment.add_scalar(
-            "recalls/tr_r1", tr_r1, pl_module.global_step
-        )
-        pl_module.logger.experiment.add_scalar(
-            "recalls/tr_r5", tr_r5, pl_module.global_step
-        )
-        pl_module.logger.experiment.add_scalar(
-            "recalls/tr_r10", tr_r10, pl_module.global_step
-        )
-        """
         the_metric += ir_r1.item() + tr_r1.item()
 
     for loss_name, v in pl_module.hparams.config["loss_names"].items():
@@ -130,6 +110,16 @@ def epoch_wrapup(pl_module):
                 getattr(pl_module, f"{phase}_{loss_name}_loss").compute(),
             )
             getattr(pl_module, f"{phase}_{loss_name}_loss").reset()
+        elif loss_name == "vqa_attacked" : 
+            value = getattr(pl_module, f"{phase}_{loss_name}_score").compute()
+            pl_module.log(f"{loss_name}/{phase}/score_epoch", value)
+            getattr(pl_module, f"{phase}_{loss_name}_score").reset()
+            pl_module.log(
+                f"{loss_name}/{phase}/loss_epoch",
+                getattr(pl_module, f"{phase}_{loss_name}_loss").compute(),
+            )
+            getattr(pl_module, f"{phase}_{loss_name}_loss").reset()        
+        
         elif loss_name == "nlvr2":
             if phase == "train":
                 value = getattr(pl_module, f"train_{loss_name}_accuracy").compute()
@@ -199,7 +189,11 @@ def epoch_wrapup(pl_module):
                         getattr(pl_module, f"dev_nlvr2_attacked_loss").compute(),
                     )
                     getattr(pl_module, f"dev_nlvr2_attacked_loss").reset()
-
+                    
+                    value = getattr(pl_module, f"dev_nlvr2_attacked_change_rate_cross").compute()
+                    pl_module.log(f"nlvr2_attacked/dev/change_rate_cross_epoch", value)
+                    getattr(pl_module, f"dev_nlvr2_attacked_change_rate_cross").reset()                 
+                    
                 value = getattr(pl_module, f"test_nlvr2_original_accuracy").compute()
                 pl_module.log(f"nlvr2_original/test/accuracy_epoch", value)
                 getattr(pl_module, f"test_nlvr2_original_accuracy").reset()
@@ -216,45 +210,12 @@ def epoch_wrapup(pl_module):
                         f"nlvr2_attacked/test/loss_epoch",
                         getattr(pl_module, f"test_nlvr2_attacked_loss").compute(),
                     )
-                    getattr(pl_module, f"test_nlvr2_attacked_loss").reset()                 
-
-            """
-            else:
-                value = getattr(pl_module, f"dev_{loss_name}_accuracy").compute()
-                pl_module.log(f"{loss_name}/dev/accuracy_epoch", value)
-                getattr(pl_module, f"dev_{loss_name}_accuracy").reset()
-                pl_module.log(
-                    f"{loss_name}/dev/loss_epoch",
-                    getattr(pl_module, f"dev_{loss_name}_loss").compute(),
-                )
-                getattr(pl_module, f"dev_{loss_name}_loss").reset()
-
-                value = getattr(pl_module, f"test_{loss_name}_accuracy").compute()
-                pl_module.log(f"{loss_name}/test/accuracy_epoch", value)
-                getattr(pl_module, f"test_{loss_name}_accuracy").reset()
-                
-                value_change = getattr(pl_module, f"test_{loss_name}_change_rate_cross").compute()
-                pl_module.log(f"{loss_name}/test/_change_rate_cross_epoch", value_change)
-                getattr(pl_module, f"test_{loss_name}_change_rate_cross").reset()
-                
-                pl_module.log(
-                    f"{loss_name}/test/loss_epoch",
-                    getattr(pl_module, f"test_{loss_name}_loss").compute(),
-                )
-                getattr(pl_module, f"test_{loss_name}_loss").reset()    
-                
-                if pl_module.image_view:
-                    value = getattr(pl_module, f"test_{loss_name}_delta").compute()
-                    pl_module.log(f"{loss_name}/test/img_delta_epoch", value)
-                    getattr(pl_module, f"test_{loss_name}_delta").reset()
-                if pl_module.text_view:
-                    value = getattr(pl_module, f"test_{loss_name}_num_changes").compute()
-                    pl_module.log(f"{loss_name}/test/txt_num_changes", value)
-                    getattr(pl_module, f"test_{loss_name}_num_changes").reset()
-                    value = getattr(pl_module, f"test_{loss_name}_change_rate").compute()
-                    pl_module.log(f"{loss_name}/test/txt_change_rate", value)
-                    getattr(pl_module, f"test_{loss_name}_change_rate").reset()                
-                """   
+                    getattr(pl_module, f"test_nlvr2_attacked_loss").reset()    
+                    
+                    value = getattr(pl_module, f"test_nlvr2_attacked_change_rate_cross").compute()
+                    pl_module.log(f"nlvr2_attacked/test/change_rate_cross_epoch", value)
+                    getattr(pl_module, f"test_nlvr2_attacked_change_rate_cross").reset()                 
+ 
         elif loss_name == "irtr":
             pl_module.log(
                 f"{loss_name}/{phase}/irtr_loss_epoch",
@@ -328,13 +289,14 @@ def epoch_wrapup(pl_module):
                     pl_module.log(f"{loss_name}_loss_redundancy_text/epoch/{phase}", value_redundancy_text)
                     getattr(pl_module, f"{phase}_{loss_name}_loss_redundancy_text").reset()             
             
-            #value_text = getattr(pl_module, f"{phase}_{loss_name}_loss_text").compute()
-            #pl_module.log(f"{loss_name}_loss_text/epoch/{phase}", value_text)
-            #getattr(pl_module, f"{phase}_{loss_name}_loss_text").reset()            
-            
-            #value_image = getattr(pl_module, f"{phase}_{loss_name}_loss_image").compute()
-            #pl_module.log(f"{loss_name}_loss_image/epoch/{phase}", value)
-            #getattr(pl_module, f"{phase}_{loss_name}_loss_image").reset()            
+                if pl_module.image_view  and pl_module.text_view : 
+                    value_invariance_both = getattr(pl_module, f"{phase}_{loss_name}_loss_invariance_both").compute()
+                    pl_module.log(f"{loss_name}_loss_invariance_both/epoch/{phase}", value_invariance_both)
+                    getattr(pl_module, f"{phase}_{loss_name}_loss_invariance_both").reset()     
+                    
+                    value_redundancy_both = getattr(pl_module, f"{phase}_{loss_name}_loss_redundancy_both").compute()
+                    pl_module.log(f"{loss_name}_loss_redundancy_both/epoch/{phase}", value_redundancy_text)
+                    getattr(pl_module, f"{phase}_{loss_name}_loss_redundancy_both").reset()                 
 
         else:
             value = getattr(pl_module, f"{phase}_{loss_name}_accuracy").compute()
@@ -381,7 +343,7 @@ def set_schedule(pl_module):
         "norm2.bias",
         "norm2.weight",
     ]
-    head_names = ["vqa_classifier", "nlvr2_classifier", "moco_head", "barlowtwinshead"] # barlowtwinshead
+    head_names = ["vqa_classifier", "nlvr2_classifier", "moco_head", "barlowtwinshead"]
     lr_mult = pl_module.hparams.config["lr_mult"]
     end_lr = pl_module.hparams.config["end_lr"]
     decay_power = pl_module.hparams.config["decay_power"]

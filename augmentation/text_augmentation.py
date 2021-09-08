@@ -1,5 +1,5 @@
 from transformers import PegasusForConditionalGeneration, PegasusTokenizer
-from transformers import BertTokenizer#
+from transformers import BertTokenizer
 from augmentation.eda import eda
 from sentence_transformers import SentenceTransformer,util
 import torch
@@ -43,10 +43,6 @@ class TextAugmentation :
             cosine_scores = util.pytorch_cos_sim(original_text_embeddings, augmented_text_embeddings)            
             values, indices = torch.sort(cosine_scores,descending =True) 
             final_sentences.append(augmented_text[int(indices[0][epoch])])
-        #for i,sentence in enumerate(batch["text"]) : 
-        #    print("Original sentence :::", sentence)
-        #    print("Augmented sentence:::", final_sentences[i]) 
-        #    print("\n")
    
         outputs = self.tokenizer(final_sentences, truncation=True, padding=True, max_length=self.max_length)
         batch["text"] = augmented_text

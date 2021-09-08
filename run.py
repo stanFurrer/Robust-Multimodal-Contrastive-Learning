@@ -1,3 +1,4 @@
+import pickle
 import os
 import copy
 import pytorch_lightning as pl
@@ -11,8 +12,10 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 @ex.automain
 def main(_config):
+
     _config = copy.deepcopy(_config)
     print("\n------------------------------")
+    print("NAME EXPERIENCE : ", _config["exp_name"])
     print("The Multimodal is set to ", _config["Multimodal"])
     if _config["augmentation"] : 
         print("Doing augmentation") 
@@ -28,10 +31,10 @@ def main(_config):
             print("n_candidates :",_config["n_candidates"])
             print("max_loops :",_config["max_loops"])        
     print("------------------------------\n")    
-        
+
     #os.environ['MASTER_ADDR'] = 'localhost'
     #os.environ['MASTER_PORT'] = '12355'
-    
+
     pl.seed_everything(_config["seed"])
 
     dm = MTDataModule(_config, dist=True)
@@ -47,7 +50,7 @@ def main(_config):
         mode="max",
         save_last=True,
     )
-    test = True
+    test = False #-----------------------------------------------------!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     if test == True : 
         # For test Purposes : Other
         logger = pl.loggers.TensorBoardLogger(
@@ -56,15 +59,20 @@ def main(_config):
             #name=f'{exp_name}_seed{_config["seed"]}_from_{_config["load_path"].split("/")[-1][:-5]}',
         )         
     else : 
-        name    = "Finetuning_New_Moco" # BarlowTwins_New
-        version = "NLVR2_aug" 
+        if _config["exp_save"] !="vilt" : 
+            name = _config["exp_save"]
+        else : 
+            name = "Pretraining_moco"#"finetuning_irtr_flick_barlowtwins"
+            #name = "MCL/Finetuning_IRTR_flick_moco"
+            #name    = "IRTR/finetuning_irtr_barlowtwins" # NLVR2/Finetuning_nlvr2_moco
+        version = "Version-3component" 
         # For experimence Purposes 
         logger = pl.loggers.TensorBoardLogger(
             _config["log_dir"],
             version=version,
             name= name
         )          
-     
+
     lr_callback = pl.callbacks.LearningRateMonitor(logging_interval="step")
     # callbacks = [checkpoint_callback, lr_callback]
     callbacks = [lr_callback]
@@ -106,4 +114,5 @@ def main(_config):
     if not _config["test_only"]:
         trainer.fit(model, datamodule=dm)
     else:
-        trainer.test(model, datamodule=dm)
+        print("-----------This is for test only--------------- ")
+        results = trainer.test(model, datamodule=dm)
