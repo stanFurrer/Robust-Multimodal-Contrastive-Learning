@@ -1,7 +1,7 @@
 # Robust Multimodal Contrastive Learning
 
 ## Introduction 
-PyTorch Lightning code for the paper "RMCL: Robust Multimodal Contrastive Learning". Slides of our talk are avialable [here](Presentation_final_google.pptx).
+PyTorch Lightning code for the paper "RMCL: Robust Multimodal Contrastive Learning". Slides of our talk are avialable [here](./assets/Presentation_final_google.pptx).
 
 ---
 <p align="center">
